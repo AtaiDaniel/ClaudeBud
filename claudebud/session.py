@@ -181,7 +181,7 @@ class _BannerOverwriter:
         # Claude's original banner is 3 lines. For every extra line we add,
         # insert a blank line at row 4 first to push Claude's content down,
         # then compensate the restored cursor position with \x1b[NB.
-        extra = len(rows) - 3
+        extra = len(rows) - 3 + 1  # +1: Claude's cursor lands one line below banner
         return (
             "\x1b7"                  # save cursor (after Claude's banner, ~row 4)
             + "\x1b[4;1H"           # go to first line after Claude's 3-line banner
