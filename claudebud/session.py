@@ -220,10 +220,8 @@ class _BannerOverwriter:
             row3,
         ]
         return (
-            "\x1b7"            # save cursor position
-            "\x1b[1;1H"        # jump to row 1
+            "\x1b[1;1H"        # jump to row 1 (no save/restore — breaks xterm.js)
             + "\r\n".join(rows)
-            + "\x1b8"          # restore cursor position
         )
 
 
