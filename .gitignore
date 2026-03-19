@@ -8,6 +8,8 @@ kill-daemon.bat
 BUILD_PLAN.md
 PROGRESS.md
 ISSUES.md
+BANNER_INFO.md
+CLAUDE.md
 
 # Python build artifacts
 __pycache__/

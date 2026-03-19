@@ -227,23 +227,44 @@
     #virtual-kbd.open { display: block; }
 
     /* simple-keyboard dark theme overrides */
-    #virtual-kbd .simple-keyboard { background: transparent; padding: 0; }
-    #virtual-kbd .hg-theme-default { background: transparent; border-radius: 0; }
-    #virtual-kbd .hg-theme-default .hg-row { margin-bottom: 4px; }
+    #virtual-kbd .simple-keyboard { background: transparent !important; padding: 0 !important; }
+    #virtual-kbd .hg-theme-default { background: transparent !important; border-radius: 0 !important; }
+    #virtual-kbd .hg-theme-default .hg-row { margin-bottom: 4px !important; }
     #virtual-kbd .hg-theme-default .hg-button {
-      background: var(--btn-bg);
-      color: var(--text);
-      border-bottom: 2px solid #222;
-      border-radius: 5px;
-      font-family: monospace;
-      font-size: 12px;
-      height: 38px;
-      box-shadow: none;
+      background: #2c2c2c !important;
+      color: #00ff88 !important;
+      border: 1px solid #444 !important;
+      border-bottom: 2px solid #111 !important;
+      border-radius: 5px !important;
+      font-family: monospace !important;
+      font-size: 12px !important;
+      height: 38px !important;
+      box-shadow: none !important;
       flex-shrink: 1;
     }
-    #virtual-kbd .hg-theme-default .hg-button:active { background: var(--btn-active); }
+    #virtual-kbd .hg-theme-default .hg-button:active {
+      background: #444 !important;
+      color: #00ff88 !important;
+    }
+    /* Modifier keys (Shift, Ctrl, Alt, etc.) — slightly different shade */
+    #virtual-kbd .hg-theme-default .hg-button[data-skbtn="{shift}"],
+    #virtual-kbd .hg-theme-default .hg-button[data-skbtn="{ctrl}"],
+    #virtual-kbd .hg-theme-default .hg-button[data-skbtn="{alt}"],
+    #virtual-kbd .hg-theme-default .hg-button[data-skbtn="{altGr}"],
+    #virtual-kbd .hg-theme-default .hg-button[data-skbtn="{bksp}"],
+    #virtual-kbd .hg-theme-default .hg-button[data-skbtn="{enter}"],
+    #virtual-kbd .hg-theme-default .hg-button[data-skbtn="{tab}"],
+    #virtual-kbd .hg-theme-default .hg-button[data-skbtn="{escape}"],
+    #virtual-kbd .hg-theme-default .hg-button[data-skbtn="{lock}"] {
+      background: #222 !important;
+      color: #888 !important;
+    }
     /* Sticky key active state */
-    #virtual-kbd .hg-theme-default .hg-button.hg-activeButton { background: #005533; color: var(--text); }
+    #virtual-kbd .hg-theme-default .hg-button.hg-activeButton {
+      background: #005533 !important;
+      color: #00ff88 !important;
+      border-color: #007744 !important;
+    }
     /* Wider keys */
     #virtual-kbd .hg-theme-default .hg-button[data-skbtn="{bksp}"],
     #virtual-kbd .hg-theme-default .hg-button[data-skbtn="{enter}"] { max-width: 80px; }
@@ -333,39 +354,19 @@
       outline: none;
     }
 
-    /* ── Notification settings panel ── */
-    #notif-settings {
-      display: none;
-      flex-direction: column;
-      background: var(--tab-bg);
+    /* ── Notification section inside kbd-settings ── */
+    .kbds-divider {
+      border: none;
       border-top: 1px solid var(--tab-border);
-      padding: 12px;
-      gap: 10px;
-      flex-shrink: 0;
+      margin: 4px 0;
     }
-    #notif-settings.open { display: flex; }
-
-    .notif-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      font-size: 13px;
+    .kbds-section-label {
+      font-size: 11px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 2px 0;
     }
-    .notif-done-btn {
-      background: #005533;
-      color: var(--text);
-      border: 1px solid #007744;
-      border-radius: 6px;
-      font-family: monospace;
-      font-size: 13px;
-      padding: 4px 14px;
-      cursor: pointer;
-      -webkit-tap-highlight-color: transparent;
-    }
-    .notif-done-btn:active { background: #007744; }
-
-    .notif-label { font-size: 12px; color: var(--text-dim); padding: 2px 0; }
-
     .notif-actions { display: flex; gap: 8px; }
     .notif-btn {
       flex: 1;
@@ -382,6 +383,7 @@
     .notif-btn:active { background: var(--btn-active); }
     .notif-btn:disabled { opacity: 0.4; cursor: default; }
 
+    #notif-status-row { font-size: 12px; color: var(--text-dim); }
     #notif-status { font-size: 12px; min-height: 16px; }
     #notif-status.ok  { color: #0f0; }
     #notif-status.err { color: #f55; }
@@ -400,7 +402,8 @@
   <div id="topbar">
     <div id="status-dot" title="WebSocket disconnected"></div>
     <span style="color:var(--text-dim);font-size:13px;">ClaudeBud</span>
-    <button id="btn-notif" class="topbar-btn" title="Notification settings">&#128276;</button>
+    <button id="btn-notif" class="topbar-btn" title="Toggle notifications">&#128276;</button>
+    <button id="btn-scroll-bottom" class="topbar-btn" title="Scroll to bottom">&#8595;</button>
     <button id="btn-kbd-config"  class="topbar-btn" title="Configure buttons">&#9881;</button>
   </div>
   <div id="tabbar"></div>
@@ -412,18 +415,6 @@
   </div>
   <div id="kbdbar"></div>
   <div id="virtual-kbd"></div>
-  <div id="notif-settings">
-    <div class="notif-header">
-      <span>Notifications</span>
-      <button class="notif-done-btn" id="notif-settings-close">Done</button>
-    </div>
-    <div id="notif-status-row" class="notif-label"></div>
-    <div class="notif-actions">
-      <button class="notif-btn" id="notif-enable">Enable notifications</button>
-      <button class="notif-btn" id="notif-test">Send test</button>
-    </div>
-    <div id="notif-status"></div>
-  </div>
   <div id="kbd-settings">
     <div class="kbds-header">
       <span>Configure Buttons</span>
@@ -445,6 +436,14 @@
       </div>
     </div>
     <div id="kbd-settings-grid" class="kbds-grid"></div>
+    <hr class="kbds-divider">
+    <span class="kbds-section-label">Notifications</span>
+    <div id="notif-status-row"></div>
+    <div class="notif-actions">
+      <button class="notif-btn" id="notif-request-perm">Request permission</button>
+      <button class="notif-btn" id="notif-test">Send test</button>
+    </div>
+    <div id="notif-status"></div>
   </div>
 </div>
 
@@ -493,7 +492,8 @@
   const MAX_RECONNECT = 30000;
 
   function connect() {
-    ws = new WebSocket(`ws://${location.host}/ws`);
+    const _wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(`${_wsProto}//${location.host}/ws`);
 
     ws.onopen = () => {
       statusDot.className = 'connected';
@@ -526,7 +526,12 @@
   // ── Message handling ───────────────────────────────────────────────────────
   function handleMessage(msg) {
     switch (msg.type) {
-      case 'sessions_snapshot': msg.sessions.forEach(addSession); break;
+      case 'sessions_snapshot': {
+        const snapIds = new Set(msg.sessions.map(s => s.session_id));
+        Object.keys(sessions).forEach(sid => { if (!snapIds.has(sid)) removeSession(sid); });
+        msg.sessions.forEach(addSession);
+        break;
+      }
       case 'session_added':     addSession(msg);                  break;
       case 'session_removed':   removeSession(msg.session_id);    break;
       case 'session_renamed':   renameSession(msg.session_id, msg.name); break;
@@ -754,8 +759,8 @@
   ];
   const BTN_MAP = Object.fromEntries(BUTTON_DEFS.map(b => [b.id, b]));
 
-  // Default 2×3 grid — last position (bottom-right) is always the keyboard toggle, not a slot
-  const DEFAULT_KBD_CFG = { rows: 2, cols: 3, slots: ['up','down','enter','esc','shifttab'] };
+  // Default 2×3 grid — all 6 positions are configurable slots
+  const DEFAULT_KBD_CFG = { rows: 2, cols: 3, slots: ['up','down','enter','esc','shifttab','empty'] };
 
   function loadKbdConfig() {
     try {
@@ -776,8 +781,13 @@
     requestAnimationFrame(() => safeFit(activeId));
   }
 
-  // Build the keyboard-toggle button that always sits in the bottom-right slot.
-  // Re-created on every renderKbdBar() so its label reflects the current mode.
+  document.getElementById('btn-scroll-bottom').addEventListener('click', () => {
+    if (!activeId) return;
+    const s = sessions[activeId];
+    if (s) s.term.scrollToBottom();
+  });
+
+  // Build the keyboard-toggle button (normal ↔ PC mode).
   function makeKbdToggleBtn() {
     const btn = document.createElement('button');
     btn.className = 'kbd-btn';
@@ -792,7 +802,8 @@
     kbdbar.innerHTML = '';
 
     if (kbdMode === 'normal') {
-      // Text input row — tapping it opens the phone's system keyboard
+      // Text input row — tapping it opens the phone's system keyboard.
+      // Toggle button sits on the right of this row.
       const row = document.createElement('div');
       row.className = 'kbd-row';
       const input = document.createElement('input');
@@ -814,43 +825,33 @@
       row.appendChild(makeKbdToggleBtn());
       kbdbar.appendChild(row);
       requestAnimationFrame(() => input.focus());
-      // fall through to also render the button grid below
+    } else {
+      // PC mode: toggle button in its own slim row above the grid
+      const row = document.createElement('div');
+      row.className = 'kbd-row';
+      row.appendChild(makeKbdToggleBtn());
+      kbdbar.appendChild(row);
     }
 
-    // Button grid — always shown in both modes
+    // Button grid — all slots configurable in both modes
     const { rows, cols, slots } = kbdConfig;
-    const lastSlot = rows * cols - 1;
     for (let r = 0; r < rows; r++) {
       const r2 = document.createElement('div');
       r2.className = 'kbd-row';
       for (let c = 0; c < cols; c++) {
         const idx = r * cols + c;
-        if (idx === lastSlot && kbdMode === 'pc') {
-          r2.appendChild(makeKbdToggleBtn());
-        } else if (idx === lastSlot) {
-          // In normal mode the toggle is already in the text input row — skip this slot
-          const def = BTN_MAP[slots[idx]] || BTN_MAP['empty'];
-          const btn = document.createElement('button');
-          btn.className = 'kbd-btn';
-          btn.title = def.title;
-          btn.textContent = def.label;
-          if (def.data !== null) btn.addEventListener('click', () => sendInput(def.data));
-          else { btn.disabled = true; btn.style.opacity = '0.15'; }
-          r2.appendChild(btn);
+        const def = BTN_MAP[slots[idx]] || BTN_MAP['empty'];
+        const btn = document.createElement('button');
+        btn.className = 'kbd-btn';
+        btn.title = def.title;
+        btn.textContent = def.label;
+        if (def.data !== null) {
+          btn.addEventListener('click', () => sendInput(def.data));
         } else {
-          const def = BTN_MAP[slots[idx]] || BTN_MAP['empty'];
-          const btn = document.createElement('button');
-          btn.className = 'kbd-btn';
-          btn.title = def.title;
-          btn.textContent = def.label;
-          if (def.data !== null) {
-            btn.addEventListener('click', () => sendInput(def.data));
-          } else {
-            btn.disabled = true;
-            btn.style.opacity = '0.15';
-          }
-          r2.appendChild(btn);
+          btn.disabled = true;
+          btn.style.opacity = '0.15';
         }
+        r2.appendChild(btn);
       }
       kbdbar.appendChild(r2);
     }
@@ -870,8 +871,7 @@
     grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
     grid.innerHTML = '';
 
-    // rows*cols - 1: last position is always the fixed keyboard toggle, not configurable
-    for (let i = 0; i < rows * cols - 1; i++) {
+    for (let i = 0; i < rows * cols; i++) {
       const current = slots[i] || 'empty';
       const sel = document.createElement('select');
       sel.className = 'kbd-slot-select';
@@ -896,7 +896,7 @@
       const n = parseInt(b.dataset.val);
       if (n === kbdConfig.rows) return;
       kbdConfig.rows = n;
-      const total = kbdConfig.rows * kbdConfig.cols - 1;  // last slot is fixed toggle
+      const total = kbdConfig.rows * kbdConfig.cols;
       while (kbdConfig.slots.length < total) kbdConfig.slots.push('empty');
       saveKbdConfig();
       renderKbdBar();
@@ -910,7 +910,7 @@
       const n = parseInt(b.dataset.val);
       if (n === kbdConfig.cols) return;
       kbdConfig.cols = n;
-      const total = kbdConfig.rows * kbdConfig.cols - 1;  // last slot is fixed toggle
+      const total = kbdConfig.rows * kbdConfig.cols;
       while (kbdConfig.slots.length < total) kbdConfig.slots.push('empty');
       saveKbdConfig();
       renderKbdBar();
@@ -922,7 +922,7 @@
   kbdConfigBtn.addEventListener('click', () => {
     const open = kbdSettings.classList.toggle('open');
     kbdConfigBtn.classList.toggle('active', open);
-    if (open) renderKbdSettings();
+    if (open) { renderKbdSettings(); _refreshNotifStatus(); notifSetStatus(''); }
     refitActive();
   });
 
@@ -1048,13 +1048,12 @@
   renderKbdBar();
 
   // ── Web Push notification management ──────────────────────────────────────
-  const notifSettings  = document.getElementById('notif-settings');
   const notifBtn       = document.getElementById('btn-notif');
   const notifStatusEl  = document.getElementById('notif-status');
   const notifStatusRow = document.getElementById('notif-status-row');
-  const notifEnableBtn = document.getElementById('notif-enable');
-  let _swReg      = null;
-  let _pushEnabled = false;
+  let _swReg       = null;
+  let _pushEnabled  = false;
+  let _pushSupported = ('serviceWorker' in navigator) && ('PushManager' in window);
 
   function notifSetStatus(msg, cls) {
     notifStatusEl.textContent = msg;
@@ -1067,24 +1066,38 @@
     return Uint8Array.from(s, c => c.charCodeAt(0));
   }
 
-  async function _refreshNotifStatus() {
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-      notifStatusRow.textContent = 'Not supported in this browser (requires HTTPS)';
-      notifEnableBtn.disabled = true;
-      return;
+  function _updateNotifUI() {
+    notifBtn.classList.toggle('active', _pushEnabled);
+    if (!_pushSupported) {
+      notifStatusRow.textContent = 'Requires HTTPS + PWA installed to home screen';
+      document.getElementById('notif-request-perm').disabled = true;
+      document.getElementById('notif-test').disabled = true;
+    } else {
+      notifStatusRow.textContent = _pushEnabled ? 'Status: enabled' : 'Status: disabled';
+      document.getElementById('notif-test').disabled = !_pushEnabled;
     }
+  }
+
+  async function _refreshNotifStatus() {
+    if (!_pushSupported) { _updateNotifUI(); return; }
     try {
       const d = await fetch('/config/notifications').then(r => r.json());
       _pushEnabled = d.enabled;
-      notifStatusRow.textContent = _pushEnabled ? 'Status: enabled' : 'Status: disabled';
-      notifEnableBtn.textContent = _pushEnabled ? 'Disable' : 'Enable notifications';
-    } catch { notifStatusRow.textContent = 'Could not load status'; }
+    } catch { /* keep current state */ }
+    _updateNotifUI();
   }
 
   async function _enablePush() {
     notifSetStatus('Requesting permission…');
     const perm = await Notification.requestPermission();
-    if (perm !== 'granted') { notifSetStatus('Permission denied.', 'err'); return; }
+    if (perm === 'denied') {
+      notifSetStatus('Blocked. Go to Android Settings → Apps → Chrome → Notifications to allow.', 'err');
+      return;
+    }
+    if (perm !== 'granted') {
+      notifSetStatus(`Permission not granted (${perm}). Install as PWA first: browser menu → Add to Home Screen.`, 'err');
+      return;
+    }
     if (!_swReg) { notifSetStatus('Service worker not ready — reload the page.', 'err'); return; }
     try {
       const key = await fetch('/push/vapid-public-key').then(r => r.json()).then(d => d.vapid_public_key);
@@ -1098,9 +1111,8 @@
         body: JSON.stringify(sub.toJSON()),
       });
       _pushEnabled = true;
-      notifEnableBtn.textContent = 'Disable';
-      notifStatusRow.textContent = 'Status: enabled';
       notifSetStatus('Notifications enabled!', 'ok');
+      _updateNotifUI();
     } catch (e) { notifSetStatus('Error: ' + e.message, 'err'); }
   }
 
@@ -1112,13 +1124,27 @@
       }
       await fetch('/push/subscribe', { method: 'DELETE' });
       _pushEnabled = false;
-      notifEnableBtn.textContent = 'Enable notifications';
-      notifStatusRow.textContent = 'Status: disabled';
       notifSetStatus('Disabled.', 'ok');
+      _updateNotifUI();
     } catch (e) { notifSetStatus('Error: ' + e.message, 'err'); }
   }
 
-  notifEnableBtn.addEventListener('click', () => _pushEnabled ? _disablePush() : _enablePush());
+  // Bell button in top bar = direct on/off toggle
+  notifBtn.addEventListener('click', async () => {
+    if (!_pushSupported) return;
+    if (_pushEnabled) {
+      await _disablePush();
+    } else {
+      await _enablePush();
+    }
+    refitActive();
+  });
+
+  // Request permission button (in settings panel)
+  document.getElementById('notif-request-perm').addEventListener('click', async () => {
+    notifSetStatus('');
+    await _enablePush();
+  });
 
   document.getElementById('notif-test').addEventListener('click', async () => {
     notifSetStatus('Sending…');
@@ -1132,19 +1158,6 @@
     } catch (e) { notifSetStatus('Error: ' + e.message, 'err'); }
   });
 
-  notifBtn.addEventListener('click', () => {
-    const open = notifSettings.classList.toggle('open');
-    notifBtn.classList.toggle('active', open);
-    if (open) { _refreshNotifStatus(); notifSetStatus(''); }
-    refitActive();
-  });
-
-  document.getElementById('notif-settings-close').addEventListener('click', () => {
-    notifSettings.classList.remove('open');
-    notifBtn.classList.remove('active');
-    refitActive();
-  });
-
   // Register service worker (must complete before subscribe is possible)
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js', { scope: '/' })
@@ -1154,6 +1167,7 @@
   }
 
   // ── Boot ───────────────────────────────────────────────────────────────────
+  _refreshNotifStatus();
   connect();
 })();
 </script>

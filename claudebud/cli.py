@@ -32,11 +32,34 @@ def _claude_available() -> bool:
 # ── Daemon management ──────────────────────────────────────────────────────────
 
 def is_daemon_running(port: int) -> bool:
-    try:
-        r = httpx.get(f"http://127.0.0.1:{port}/sessions", timeout=1.0)
-        return r.status_code == 200
-    except Exception:
-        return False
+    for scheme in ("https", "http"):
+        try:
+            r = httpx.get(
+                f"{scheme}://127.0.0.1:{port}/sessions",
+                timeout=1.0,
+                verify=False,
+            )
+            if r.status_code == 200:
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _daemon_base_url(port: int) -> str:
+    """Return the loopback base URL the daemon is actually serving on."""
+    for scheme in ("https", "http"):
+        try:
+            r = httpx.get(
+                f"{scheme}://127.0.0.1:{port}/sessions",
+                timeout=1.0,
+                verify=False,
+            )
+            if r.status_code == 200:
+                return f"{scheme}://127.0.0.1:{port}"
+        except Exception:
+            continue
+    return f"http://127.0.0.1:{port}"
 
 
 def start_daemon(port: int) -> None:
@@ -85,6 +108,7 @@ def run_claude(passthrough_args: list, session_name: str = None) -> None:
 
     ensure_daemon(port)
 
+    base_url = _daemon_base_url(port)
     session_id = str(uuid.uuid4())
 
     try:
@@ -92,9 +116,10 @@ def run_claude(passthrough_args: list, session_name: str = None) -> None:
         if session_name:
             payload["name"] = session_name
         httpx.post(
-            f"http://127.0.0.1:{port}/sessions/register",
+            f"{base_url}/sessions/register",
             json=payload,
             timeout=5.0,
+            verify=False,
         )
     except Exception as e:
         print(f"[claudebud] Warning: could not register session: {e}", file=sys.stderr)
@@ -109,24 +134,38 @@ def run_claude(passthrough_args: list, session_name: str = None) -> None:
     # and replaces any title escapes claude emits.  Without -n we pass None
     # so claude's own title sequences flow through unchanged.
     local_ip = _get_local_ip()
-    tailscale_ip = _get_tailscale_ip()
-    local_url = f"http://{local_ip}:{port}"
-    tailscale_url = f"http://{tailscale_ip}:{port}" if tailscale_ip else ""
+    tailscale_fqdn = _get_tailscale_fqdn()
+    # Use the scheme the daemon is actually serving (http or https).
+    # _daemon_base_url probes loopback to detect it.
+    scheme = "https" if base_url.startswith("https") else "http"
+    local_url = f"{scheme}://{local_ip}:{port}"
+    if tailscale_fqdn:
+        # HTTPS certs are issued for the hostname; use raw IP only for HTTP.
+        ts_host = tailscale_fqdn if scheme == "https" else _get_tailscale_ip()
+        tailscale_url = f"{scheme}://{ts_host}:{port}" if ts_host else ""
+    else:
+        tailscale_url = ""
     session = Session(
         session_id, port, passthrough_args,
         terminal_title=session_name,
         local_url=local_url,
         tailscale_url=tailscale_url,
     )
+
+    # Print a clean banner before Claude's pty takes over.
+    # Stays visible in the terminal scrollback after Claude's TUI clears the screen.
+    _print_launch_banner(local_url, tailscale_url)
+
     exit_code = 0
     try:
         exit_code = session.run()
     finally:
         try:
             httpx.post(
-                f"http://127.0.0.1:{port}/sessions/unregister",
+                f"{base_url}/sessions/unregister",
                 json={"session_id": session_id},
                 timeout=2.0,
+                verify=False,
             )
         except Exception:
             pass
@@ -162,12 +201,49 @@ def _get_tailscale_ip() -> str:
     return ""
 
 
+def _get_tailscale_fqdn() -> str:
+    """Return the machine's Tailscale DNS name (e.g. 'box.tail-xxxx.ts.net') or ''."""
+    try:
+        result = subprocess.run(
+            ["tailscale", "status", "--json"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            import json as _json
+            data = _json.loads(result.stdout)
+            dns = data.get("Self", {}).get("DNSName", "")
+            return dns.rstrip(".")
+    except Exception:
+        pass
+    return ""
+
+
+def _print_launch_banner(local_url: str, tailscale_url: str) -> None:
+    """Print a clean one-time banner before Claude's pty starts.
+
+    Uses no cursor magic — just plain text that scrolls into the terminal
+    scrollback once Claude's TUI takes over the screen.
+    """
+    from . import __version__ as _cbv
+    DIM = "\x1b[2m"
+    CB  = "\x1b[38;2;0;210;160m"  # teal/mint — ClaudeBud accent
+    RST = "\x1b[0m"
+    rule = DIM + "─" * 48 + RST
+    print(rule)
+    print(f"  {CB}ClaudeBud v{_cbv}{RST}  {DIM}—  watch & control from your phone{RST}")
+    print(f"  {DIM}Local:   {RST} {CB}{local_url}{RST}")
+    if tailscale_url:
+        print(f"  {DIM}External:{RST} {CB}{tailscale_url}{RST}  {DIM}(Tailscale){RST}")
+    print(rule)
+    print(flush=True)
+
+
 def _print_access_urls(port: int) -> None:
     local_ip = _get_local_ip()
-    tailscale_ip = _get_tailscale_ip()
-    print(f"  Local:    http://{local_ip}:{port}")
-    if tailscale_ip:
-        print(f"  External: http://{tailscale_ip}:{port}  (Tailscale)")
+    tailscale_fqdn = _get_tailscale_fqdn()
+    print(f"  Local:    https://{local_ip}:{port}  (self-signed cert)")
+    if tailscale_fqdn:
+        print(f"  Tailscale: https://{tailscale_fqdn}:{port}  (trusted cert)")
 
 
 def _setup_autostart_macos(port: int) -> None:
@@ -273,7 +349,7 @@ def run_setup() -> None:
     cfg = load_config()
 
     print("Notifications are configured via the PWA — tap the 🔔 button in the app.")
-    print("(Requires HTTPS access, e.g. via Tailscale: https://your-machine.ts.net:3131)")
+    print("(Requires HTTPS — Tailscale provides this automatically, or use the local cert.)")
     print()
 
     # Autostart
@@ -302,16 +378,41 @@ def run_setup() -> None:
         else:
             print(f"  Unsupported platform for autostart: {platform}")
 
-    # 3. Print URL
+    # 3. HTTPS info
+    print()
+    print("HTTPS")
+    print("-" * 40)
+    tailscale_fqdn = _get_tailscale_fqdn()
+    if tailscale_fqdn:
+        print(f"Tailscale detected: {tailscale_fqdn}")
+        print("ClaudeBud will obtain a browser-trusted Let's Encrypt certificate")
+        print("automatically via 'tailscale cert' on first start.")
+        print()
+        print("If HTTPS is not yet enabled on your tailnet, enable it at:")
+        print("  https://login.tailscale.com/admin/dns  (toggle 'Enable HTTPS')")
+    else:
+        print("Tailscale not detected.")
+        print("ClaudeBud will use a self-signed certificate for local network access.")
+        print(f"  Cert: ~/.claudebud/cert.pem  (auto-generated on first start)")
+        print()
+        print("To use push notifications on Android:")
+        print("  1. Copy ~/.claudebud/cert.pem to your phone")
+        print("  2. Settings → Security → Install CA Certificate → select the file")
+        print()
+        print("For automatic trusted HTTPS, install Tailscale:")
+        print("  https://tailscale.com")
+
+    # 4. Print URL
     ip = _get_local_ip()
     port = cfg["port"]
     print()
     print("Open this URL on your phone:")
-    print(f"  http://{ip}:{port}")
+    if tailscale_fqdn:
+        print(f"  https://{tailscale_fqdn}:{port}  (Tailscale — trusted cert)")
+        print(f"  https://{ip}:{port}  (local network — self-signed cert)")
+    else:
+        print(f"  https://{ip}:{port}  (accept cert warning on first visit)")
     print()
-    print("For push notifications, access via Tailscale HTTPS instead:")
-    print("  https://your-machine.tail-xxxx.ts.net")
-    print("  (Tailscale provides HTTPS automatically — required for Web Push)")
     print("Setup complete.")
 
 

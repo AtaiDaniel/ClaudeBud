@@ -2,9 +2,13 @@
 daemon.py — FastAPI server, WebSocket hub, session registry.
 """
 import asyncio
+import datetime
+import ipaddress
 import json
 import logging
 import os
+import socket as _socket
+import subprocess
 import time as _time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -20,6 +24,11 @@ from .detector import DebouncedDetector, Detector, EventType
 from .notifier import notify, StaleSubscriptionError
 
 logger = logging.getLogger(__name__)
+
+# Set by run() after cert resolution; read by GET /info so the CLI can
+# display the correct URL (scheme + hostname) in the startup banner.
+_serving_scheme: str = "http"
+_serving_fqdn:   str = ""
 
 
 # ── VAPID key generation ──────────────────────────────────────────────────────
@@ -37,6 +46,154 @@ def _generate_vapid_keys() -> tuple:
         b"\x04" + n.x.to_bytes(32, "big") + n.y.to_bytes(32, "big")
     ).rstrip(b"=").decode()
     return priv, pub
+
+
+# ── Tailscale HTTPS helpers ───────────────────────────────────────────────────
+
+def _find_tailscale_bin() -> str:
+    """Return the path to the tailscale CLI binary, or '' if not found."""
+    import shutil
+    found = shutil.which("tailscale")
+    if found:
+        return found
+    # On Windows, Tailscale CLI is often not in PATH for detached background processes.
+    candidate = Path(r"C:\Program Files\Tailscale\tailscale.exe")
+    if candidate.exists():
+        return str(candidate)
+    return ""
+
+
+def _get_tailscale_fqdn() -> tuple:
+    """Return (fqdn, tailscale_bin).  fqdn is '' if Tailscale is unavailable."""
+    tailscale_bin = _find_tailscale_bin()
+    if not tailscale_bin:
+        logger.info("Tailscale CLI not found — HTTPS disabled")
+        return "", ""
+    try:
+        result = subprocess.run(
+            [tailscale_bin, "status", "--json"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            dns = data.get("Self", {}).get("DNSName", "")
+            fqdn = dns.rstrip(".")
+            if fqdn:
+                logger.info("Tailscale FQDN: %s", fqdn)
+            else:
+                logger.info("Tailscale running but DNSName empty — HTTPS disabled")
+            return fqdn, tailscale_bin
+        else:
+            logger.warning("tailscale status failed (rc=%d): %s", result.returncode, result.stderr.strip())
+    except Exception as e:
+        logger.warning("tailscale status error: %s", e)
+    return "", tailscale_bin
+
+
+def _get_local_ips() -> list:
+    """Return all detected local IPv4 addresses as ipaddress.IPv4Address objects."""
+    ips: set = set()
+    ips.add(ipaddress.IPv4Address("127.0.0.1"))
+    try:
+        s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ips.add(ipaddress.IPv4Address(s.getsockname()[0]))
+        s.close()
+    except Exception:
+        pass
+    try:
+        for info in _socket.getaddrinfo(_socket.gethostname(), None):
+            if info[0] == _socket.AF_INET:
+                ips.add(ipaddress.IPv4Address(info[4][0]))
+    except Exception:
+        pass
+    return list(ips)
+
+
+def _ensure_self_signed_cert() -> tuple:
+    """Generate (or reuse) a self-signed cert stored at ~/.claudebud/cert.pem.
+
+    The cert lists all current local IPs as SANs so Android Chrome accepts it
+    on the local network.  Regenerates automatically when the machine's IP
+    changes.  Returns (cert_path, key_path).
+    """
+    from cryptography import x509
+    from cryptography.x509.oid import NameOID
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    base = Path.home() / ".claudebud"
+    cert_path = base / "cert.pem"
+    key_path  = base / "key.pem"
+    current_ips = set(_get_local_ips())
+
+    if cert_path.exists() and key_path.exists():
+        try:
+            existing = x509.load_pem_x509_certificate(cert_path.read_bytes())
+            san = existing.extensions.get_extension_for_class(x509.SubjectAlternativeName)
+            cert_ips = set(san.value.get_values_for_type(x509.IPAddress))
+            if current_ips.issubset(cert_ips):
+                return cert_path, key_path
+        except Exception:
+            pass
+
+    logger.info("Generating self-signed TLS certificate...")
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    san_list = [x509.DNSName("localhost")] + [x509.IPAddress(ip) for ip in current_ips]
+    now = datetime.datetime.utcnow()
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "ClaudeBud")]))
+        .issuer_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "ClaudeBud")]))
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now)
+        .not_valid_after(now + datetime.timedelta(days=3650))
+        .add_extension(x509.SubjectAlternativeName(san_list), critical=False)
+        .sign(key, hashes.SHA256())
+    )
+    base.mkdir(parents=True, exist_ok=True)
+    key_path.write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.TraditionalOpenSSL,
+            serialization.NoEncryption(),
+        )
+    )
+    cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    try:
+        key_path.chmod(0o600)
+    except Exception:
+        pass
+    logger.info("Self-signed TLS certificate saved to %s", cert_path)
+    return cert_path, key_path
+
+
+def _ensure_tailscale_cert(fqdn: str, tailscale_bin: str = "tailscale") -> tuple:
+    """Run 'tailscale cert' to obtain/renew a Let's Encrypt cert for *fqdn*.
+
+    Returns (cert_path, key_path).  Raises on failure (HTTPS not enabled on
+    the tailnet, tailscale not running, etc.).
+    """
+    base = Path.home() / ".claudebud"
+    base.mkdir(parents=True, exist_ok=True)
+    cert_path = base / "ts-cert.pem"
+    key_path  = base / "ts-key.pem"
+    logger.info("Running: %s cert %s", tailscale_bin, fqdn)
+    result = subprocess.run(
+        [
+            tailscale_bin, "cert",
+            "--cert-file", str(cert_path),
+            "--key-file",  str(key_path),
+            fqdn,
+        ],
+        capture_output=True, text=True, timeout=30,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"tailscale cert failed: {result.stderr.strip() or result.stdout.strip()}"
+        )
+    return cert_path, key_path
 
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
@@ -243,6 +400,14 @@ async def serve_icon():
         '<text y=".9em" font-size="90">🤖</text></svg>'
     )
     return Response(content=svg, media_type="image/svg+xml")
+
+
+@app.get("/info")
+async def get_info():
+    """Return the scheme and FQDN the daemon is actually serving on.
+    Used by the CLI to build the correct URL for the startup banner."""
+    cfg = load_config()
+    return {"scheme": _serving_scheme, "fqdn": _serving_fqdn, "port": cfg.get("port", 3131)}
 
 
 @app.get("/sessions")
@@ -456,6 +621,9 @@ async def test_notification():
             status_code=410,
             detail="Subscription expired. Re-enable notifications in the app.",
         )
+    except Exception as exc:
+        logger.warning("Test notification failed: %s", exc)
+        raise HTTPException(status_code=502, detail=str(exc))
     return {"ok": True}
 
 
@@ -540,7 +708,49 @@ async def websocket_endpoint(ws: WebSocket):
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def run(port: int = 3131):
-    uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
+    global _serving_scheme, _serving_fqdn
+
+    # Log to file so cert errors are visible even though the daemon is detached.
+    log_path = Path.home() / ".claudebud" / "daemon.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    file_handler = logging.FileHandler(log_path)
+    file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    logging.getLogger().addHandler(file_handler)
+    logging.getLogger().setLevel(logging.INFO)
+
+    ssl_certfile = None
+    ssl_keyfile  = None
+
+    # Try Tailscale — provides a browser-trusted Let's Encrypt cert.
+    fqdn, tailscale_bin = _get_tailscale_fqdn()
+    if fqdn:
+        try:
+            cert_path, key_path = _ensure_tailscale_cert(fqdn, tailscale_bin)
+            ssl_certfile    = str(cert_path)
+            ssl_keyfile     = str(key_path)
+            _serving_scheme = "https"
+            _serving_fqdn   = fqdn
+            logger.info("HTTPS enabled via Tailscale cert for %s", fqdn)
+        except Exception as e:
+            logger.warning(
+                "Tailscale cert unavailable (%s) — serving HTTP. "
+                "To enable HTTPS: login.tailscale.com/admin/dns → Enable HTTPS Certificates.", e
+            )
+
+    # No self-signed fallback — requires manual trust on phones.
+    # HTTP is fine for local network; Tailscale WireGuard encrypts remote traffic.
+
+    scheme = "https" if ssl_certfile else "http"
+    logger.info("ClaudeBud daemon starting on %s://0.0.0.0:%d", scheme, port)
+
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=port,
+        log_level="warning",
+        ssl_certfile=ssl_certfile,
+        ssl_keyfile=ssl_keyfile,
+    )
 
 
 if __name__ == "__main__":

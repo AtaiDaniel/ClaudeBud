@@ -45,6 +45,22 @@ _WIN_ARROW_MAP = {
 # Also handles ST terminator (ESC \) which some terminals use instead of BEL.
 _TITLE_RE = re.compile(rb"\x1b\][0-2];[^\x07\x1b]*(?:\x07|\x1b\\)")
 
+def _detect_daemon_base_url(port: int) -> str:
+    """Probe the daemon to find which scheme (https/http) it's serving on."""
+    for scheme in ("https", "http"):
+        try:
+            r = httpx.get(
+                f"{scheme}://127.0.0.1:{port}/sessions",
+                timeout=2.0,
+                verify=False,
+            )
+            if r.status_code == 200:
+                return f"{scheme}://127.0.0.1:{port}"
+        except Exception:
+            continue
+    return f"http://127.0.0.1:{port}"  # best-effort fallback
+
+
 # ── Banner rewriter ────────────────────────────────────────────────────────────
 
 # Strips ANSI/VT escape sequences from bytes so we can read plain text.
@@ -115,16 +131,13 @@ _BUDDY = [
 
 
 class _BannerOverwriter:
-    """Passes all pty output through immediately (zero buffering), but once
-    the Claude startup banner is detected it appends extra ClaudeBud info.
+    """Passes all pty output through to PC unchanged, but once the Claude
+    startup banner is detected it appends a 3-row ClaudeBud overlay for the
+    phone's xterm.js display.  The overlay is re-injected after every
+    screen-clear so it survives Claude's TUI redraws.
 
-    Returns a (pc_data, phone_data) tuple so the PC and phone can get
-    different representations:
-    - PC gets cursor-magic overwrite (rewrites rows 1-3 + inserts extra rows)
-    - Phone gets a 3-row overwrite using only absolute cursor positioning
-      (no insert-lines, no DEC save/restore — those caused the banner to
-      appear in the wrong place on xterm.js; Claude's UI redraws also
-      erased any extra appended rows, so all info fits in the original 3)
+    PC users see the ClaudeBud banner printed by cli.py *before* the pty
+    starts — no cursor magic, no stream injection needed on the PC path.
     """
 
     _MAX_SEEN = 8_000   # stop tracking after this many bytes
@@ -135,24 +148,22 @@ class _BannerOverwriter:
         self._local_url = local_url
         self._tailscale_url = tailscale_url
         # Stored after first trigger; used to re-inject after screen clears.
-        self._phone_overwrite: bytes = b""
+        self._overwrite: bytes = b""
 
     def reinject_after_clear(self, data: bytes) -> bytes:
         """If data contains a screen-clear and we have a phone banner ready,
         append the banner overwrite at the end so it lands on top of Claude's
-        redrawn UI.  Claude's interactive shell clears the screen and redraws
-        its full TUI on startup (and sometimes later); without this the banner
-        disappears immediately after being written."""
-        if not self._phone_overwrite:
+        redrawn UI."""
+        if not self._overwrite:
             return data
         if b"\x1b[2J" in data:
-            return data + self._phone_overwrite
+            return data + self._overwrite
         return data
 
     def feed(self, data: bytes):
         """Always returns (pc_data, phone_data) immediately.
-        On the trigger chunk, pc_data has the fancy cursor overwrite appended
-        and phone_data has the same overwrite via absolute positioning."""
+        PC data is passed through unmodified.
+        On the trigger chunk, phone_data has the 3-row overlay appended."""
         if self._done:
             return data, data
 
@@ -168,67 +179,32 @@ class _BannerOverwriter:
         # Render cursor-right sequences as spaces so word gaps are preserved
         plain = _to_plain(self._seen)
 
-        # Extract 3 non-empty info lines (strip logo block chars from each)
+        # Extract 2 non-empty info lines: version and model
         info: list = []
         for line in plain.splitlines():
             text = "".join(c for c in line if c not in _LOGO_CHARS).strip()
             if text:
                 info.append(text)
-            if len(info) == 3:
+            if len(info) == 2:
                 break
 
-        if len(info) < 3:
+        if len(info) < 2:
             return data, data  # keep watching
 
         self._done = True
-        pc_extra    = self._build_pc_overwrite(info[0], info[1], info[2])
         phone_extra = self._build_phone_overwrite(info[0], info[1])
-        self._phone_overwrite = phone_extra.encode("utf-8")
+        self._overwrite = phone_extra.encode("utf-8")
         return (
-            data + pc_extra.encode("utf-8"),
-            data + phone_extra.encode("utf-8"),
-        )
-
-    def _build_pc_overwrite(self, version: str, model: str, path: str) -> str:
-        """Cursor-magic banner rewrite for the PC's native terminal."""
-        from . import __version__ as _cbv
-        path = path.replace("\\", "/")
-        cb_line = f"\x1b[2K         {_CB}+ ClaudeBud v{_cbv}{_RST}"
-        rows = [
-            f"\x1b[2K{_LOGO[0]}{_BUDDY[0]}{version}",
-            f"\x1b[2K{_LOGO[1]}{_BUDDY[1]}{model}",
-            f"\x1b[2K{_LOGO[2]}{_BUDDY[2]}{_DIM}{path}{_RST}",
-            cb_line,
-            f"\x1b[2K  {_DIM}Local:    {_RST}{_CB}{self._local_url}{_RST}",
-        ]
-        if self._tailscale_url:
-            rows.append(
-                f"\x1b[2K  {_DIM}External: {_RST}{_CB}{self._tailscale_url}{_RST}"
-                f"  {_DIM}(Tailscale){_RST}"
-            )
-
-        extra = len(rows) - 3 + 1  # extra rows beyond the original 3
-        return (
-            "\x1b7"                  # save cursor
-            + "\x1b[4;1H"           # go to row 4 (just after Claude's 3-line banner)
-            + f"\x1b[{extra}L"      # insert blank lines, pushing Claude's UI down
-            + "\x1b[1;1H"           # jump to row 1
-            + "\r\n".join(rows)
-            + "\x1b8"               # restore cursor
-            + f"\x1b[{extra}B"      # compensate for the inserted lines
+            data,                              # PC: unmodified passthrough
+            data + self._overwrite,            # phone: with 3-row overlay
         )
 
     def _build_phone_overwrite(self, version: str, model: str) -> str:
-        """Minimal banner rewrite for the phone's xterm.js.
+        """3-row overlay for the phone's xterm.js.
 
-        Overwrites only the 3 existing Claude banner rows — no insert-lines,
-        no DEC save/restore cursor.  The third row shows ClaudeBud version
-        and the local URL instead of the working-directory path (which is less
-        useful on a phone and allowed us to skip extra rows entirely).
-
-        Without insert-lines the cursor lands at row 4 after the write, which
-        is exactly where Claude's separator line is, so Claude's subsequent
-        cursor sequences position everything correctly from there.
+        Overwrites only the 3 existing Claude banner rows using absolute
+        cursor positioning — no insert-lines, no DEC save/restore.
+        Row 3 shows ClaudeBud version and the access URL(s).
         """
         from . import __version__ as _cbv
         url_part = f"{_CB}{self._local_url}{_RST}"
@@ -244,8 +220,10 @@ class _BannerOverwriter:
             row3,
         ]
         return (
-            "\x1b[1;1H"        # jump to row 1 (no save/restore, no insert-lines)
+            "\x1b7"            # save cursor position
+            "\x1b[1;1H"        # jump to row 1
             + "\r\n".join(rows)
+            + "\x1b8"          # restore cursor position
         )
 
 
@@ -270,8 +248,8 @@ class Session:
         self._winpty_proc = None       # Windows only
         self._proc = None              # Unix subprocess
         self._running = False
-        self._base_url = f"http://127.0.0.1:{daemon_port}"
-        self._http = httpx.Client(timeout=5.0)
+        self._base_url = _detect_daemon_base_url(daemon_port)
+        self._http = httpx.Client(timeout=5.0, verify=False)
         self._banner = _BannerOverwriter(local_url=local_url, tailscale_url=tailscale_url)
 
     def run(self) -> int:

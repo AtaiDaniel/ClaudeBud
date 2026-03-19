@@ -4,18 +4,21 @@
 [![Python](https://img.shields.io/pypi/pyversions/claudebud)](https://pypi.org/project/claudebud/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-Monitor and control [Claude Code](https://docs.anthropic.com/en/docs/claude-code/getting-started) CLI sessions from your phone.
+**Web control and push notifications for [Claude Code](https://docs.anthropic.com/en/docs/claude-code/getting-started) terminals.**
 
-ClaudeBud is a **drop-in replacement for the `claude` command**. Type `claudebud` instead of `claude` — everything else is identical. Under the hood it wraps Claude Code in a pty, streams output to a background daemon, and serves a PWA web app on your local network so you can watch and interact with sessions from your phone.
+If you run Claude Code across multiple projects or terminal windows, you know the problem: you have to keep checking each window to see if Claude finished or needs your approval. ClaudeBud fixes that.
+
+Replace `claude` with `claudebud` and every session gets a tab in a phone-accessible web app. The moment any session finishes a task or asks for your input, you get a push notification — no matter which terminal it came from, and no matter where you are. Tap the notification to open that session and respond in seconds.
+
+ClaudeBud is a **drop-in replacement for the `claude` command** — all flags and arguments pass through unchanged. A background daemon starts automatically and keeps running between sessions.
 
 ## Features
 
-- **Push notifications** when Claude finishes or needs your input (browser-native Web Push, no app needed)
-- **Live terminal view** on your phone with full session history
-- **Multi-session tabs** — one tab per `claudebud` invocation, with custom names via `-n`
-- **Configurable keyboard** — customisable button grid + full virtual PC keyboard
-- **Remote access** via [Tailscale](https://tailscale.com) with no extra config
-- Works on **Windows**, **macOS**, and **Linux / WSL**
+- **Push notifications** — get alerted the instant Claude needs input or finishes, across every open session, no matter which terminal it ran in
+- **Multi-session tabs** — one tab per `claudebud` invocation, named automatically or via `-n`; switch between sessions without hunting for the right window
+- **Live terminal view** — full scrollback per session, readable on your phone
+- **Quick-response keyboard** — Up / Down / Enter for common approvals; toggle to full keyboard for anything else
+- **Remote access** via [Tailscale](https://tailscale.com) *(optional)* — monitor sessions from outside your network with automatic HTTPS
 
 ## Install
 
@@ -25,6 +28,8 @@ claudebud setup
 ```
 
 Requires Python 3.8+ and [Claude Code](https://docs.anthropic.com/en/docs/claude-code/getting-started).
+
+For a full step-by-step walkthrough — including autostart, phone setup, notifications, and optional Tailscale access — see [docs/setup.md](docs/setup.md).
 
 ## Quick start
 
@@ -64,12 +69,12 @@ The daemon starts automatically the first time you run `claudebud` and keeps run
 
 1. Run `claudebud setup` — it prints a URL like `http://192.168.1.42:3131`
 2. Open that URL in Chrome on your phone
-3. Tap **🔔** in the top bar → **Enable notifications** and accept the browser prompt
-4. Tap the browser menu → **Add to Home Screen** for a PWA icon
+3. Tap the browser menu → **Add to Home Screen** to install as a PWA (required for push notifications)
+4. Open the installed PWA icon, tap **🔔** in the top bar → **Enable notifications** and accept the browser prompt
 
-For detailed instructions see [docs/setup.md](docs/setup.md).
+> **Push notifications require the PWA to be installed to the home screen.** Browser tabs cannot receive Web Push on Android — you must use the Add to Home Screen / install flow first.
 
-For access from outside your home network, use [Tailscale](https://tailscale.com) and open the URL with your machine's Tailscale IP instead.
+For detailed instructions see [docs/setup.md — Phone setup](docs/setup.md#4-open-the-web-app-on-your-phone).
 
 ## Notifications
 
@@ -86,8 +91,10 @@ You'll receive:
 ```json
 {
   "port": 3131,
-  "prompt_patterns": ["(Y/n)", "(y/N)", "Allow", "Approve"],
-  "completion_patterns": ["Completed", "Task complete"],
+  "prompt_patterns": ["(Y/n)", "(y/N)", "(yes/no)", "Allow", "Approve",
+                       "Do you want to", "Press Enter", "Continue?"],
+  "completion_patterns": ["Completed", "Task complete", "Done.",
+                           "Finished", "All done"],
   "max_scrollback_lines": 2000
 }
 ```
@@ -105,12 +112,28 @@ You'll receive:
 
 Without autostart, the daemon starts automatically on the first `claudebud` invocation.
 
-## Remote access with Tailscale
+## Remote access with Tailscale *(optional)*
 
-1. Install Tailscale on both your machine and phone
-2. Run `claudebud setup` and note the local URL
-3. Replace the local IP with your machine's Tailscale IP
-4. Open `http://<tailscale-ip>:3131` on your phone — done
+ClaudeBud works on your local Wi-Fi without Tailscale. **Tailscale is only needed if you want to access your sessions from outside your home network** — e.g. from work or on mobile data.
+
+[Tailscale](https://tailscale.com) creates a private encrypted tunnel between your devices with no port forwarding or firewall changes. It also provides automatic HTTPS certificates, which are required for push notifications over an external connection.
+
+**Quick setup:**
+
+1. Create a free account at [tailscale.com](https://tailscale.com) and install Tailscale on your PC:
+   - **Windows:** [tailscale.com/download/windows](https://tailscale.com/download/windows)
+   - **macOS:** Mac App Store or [tailscale.com/download/mac](https://tailscale.com/download/mac)
+   - **Linux:** `curl -fsSL https://tailscale.com/install.sh | sh` then `sudo tailscale up`
+2. Install the **Tailscale** app on your phone (Android/iOS — search in your app store) and sign in with the same account
+3. In the [Tailscale admin console → DNS](https://login.tailscale.com/admin/dns), scroll to **HTTPS Certificates** and toggle it on
+4. Restart the ClaudeBud daemon: close all `claudebud` sessions and open a new one
+5. Open `https://<your-machine-name>.tail<xxxxx>.ts.net:3131` on your phone
+
+Your machine name appears in the [Tailscale admin console → Machines](https://login.tailscale.com/admin/machines) tab, or run `tailscale status` in a terminal. ClaudeBud also prints the Tailscale URL in the startup banner once HTTPS is active.
+
+> **Switching from HTTP to HTTPS:** After enabling Tailscale HTTPS, re-enable notifications in the app — push subscriptions are tied to the origin (`http://` vs `https://`). Open the new `https://` URL, tap 🔔, disable then re-enable.
+
+For a full walkthrough see [docs/setup.md](docs/setup.md#8-remote-access-with-tailscale-optional).
 
 ## License
 
