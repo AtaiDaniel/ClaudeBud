@@ -1,0 +1,39 @@
+# Dev tools (local only)
+kill-daemon.bat
+
+# Claude Code workspace settings (personal/local)
+.claude/
+
+# Internal development docs (not useful for end users)
+BUILD_PLAN.md
+PROGRESS.md
+
+# Python build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini

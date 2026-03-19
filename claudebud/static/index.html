@@ -1,0 +1,1151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#1a1a1a">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="/manifest.json">
+  <title>ClaudeBud</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/simple-keyboard@3/build/css/index.css">
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/simple-keyboard@3/build/index.modern.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #1a1a1a;
+      --tab-bg: #2a2a2a;
+      --tab-active: #3a3a3a;
+      --tab-border: #444;
+      --text: #00ff88;
+      --text-dim: #888;
+      --btn-bg: #333;
+      --btn-active: #555;
+      --bar-height: 48px;
+      --kbd-height: 64px;
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: monospace;
+      overflow: hidden;
+    }
+
+    /* ── Top bar ── */
+    #topbar {
+      display: flex;
+      align-items: center;
+      height: var(--bar-height);
+      background: var(--tab-bg);
+      border-bottom: 1px solid var(--tab-border);
+      padding: 0 8px;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    #status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #f55;
+      flex-shrink: 0;
+      transition: background 0.3s;
+    }
+    #status-dot.connected { background: #0f0; }
+
+    /* ── Tab bar ── */
+    #tabbar {
+      display: flex;
+      align-items: stretch;
+      height: var(--bar-height);
+      background: var(--tab-bg);
+      border-bottom: 1px solid var(--tab-border);
+      overflow-x: auto;
+      overflow-y: hidden;
+      flex-shrink: 0;
+      scrollbar-width: none;
+    }
+    #tabbar::-webkit-scrollbar { display: none; }
+
+    .tab {
+      display: flex;
+      align-items: center;
+      padding: 0 14px;
+      white-space: nowrap;
+      cursor: pointer;
+      color: var(--text-dim);
+      border-right: 1px solid var(--tab-border);
+      min-width: 80px;
+      max-width: 180px;
+      position: relative;
+      user-select: none;
+      -webkit-user-select: none;
+      gap: 6px;
+      font-size: 13px;
+    }
+    .tab.active {
+      background: var(--tab-active);
+      color: var(--text);
+    }
+
+    .tab-label {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      flex: 1;
+    }
+
+    .tab-label-input {
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid var(--text);
+      color: var(--text);
+      font-family: monospace;
+      font-size: 13px;
+      width: 100px;
+      outline: none;
+    }
+
+    .tab-status {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      background: var(--text-dim);
+    }
+    .tab-status.prompt { background: #fa0; animation: pulse 1s infinite; }
+    .tab-status.running { background: #0af; }
+    .tab-status.idle    { background: #0f0; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.3; }
+    }
+
+    /* ── Terminal area ── */
+    #terminal-wrap {
+      flex: 1;
+      overflow: hidden;
+      position: relative;
+      background: var(--bg);
+    }
+
+    .term-container {
+      position: absolute;
+      inset: 4px;
+      visibility: hidden;
+      pointer-events: none;
+    }
+    .term-container.active { visibility: visible; pointer-events: auto; }
+
+    /* xterm.js resets */
+    .term-container .xterm { height: 100%; }
+    .term-container .xterm-viewport { overflow-y: auto !important; }
+
+    #no-sessions {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 12px;
+      color: var(--text-dim);
+      font-size: 14px;
+      text-align: center;
+      padding: 20px;
+    }
+
+    /* ── Keyboard bar ── */
+    #kbdbar {
+      display: flex;
+      flex-direction: column;
+      background: var(--tab-bg);
+      border-top: 1px solid var(--tab-border);
+      padding: 6px 8px;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+
+    .kbd-row {
+      display: flex;
+      height: var(--kbd-height);
+      gap: 6px;
+    }
+
+    .kbd-btn {
+      flex: 1;
+      height: 100%;
+      background: var(--btn-bg);
+      color: var(--text);
+      border: 1px solid var(--tab-border);
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 14px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: manipulation;
+    }
+    .kbd-btn:active { background: var(--btn-active); }
+
+    /* ── Normal mode: native phone keyboard input ── */
+    .normal-kbd-input {
+      flex: 1;
+      height: 100%;
+      background: #222;
+      color: var(--text);
+      border: 1px solid var(--tab-border);
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 16px;   /* ≥16px prevents iOS auto-zoom */
+      padding: 0 12px;
+      outline: none;
+      caret-color: var(--text);
+      -webkit-tap-highlight-color: transparent;
+    }
+    .normal-kbd-input:focus { border-color: var(--text); }
+
+    /* ── Virtual PC keyboard panel ── */
+    #virtual-kbd {
+      display: none;
+      background: #1a1a1a;
+      border-top: 1px solid var(--tab-border);
+      padding: 6px 4px;
+      flex-shrink: 0;
+    }
+    #virtual-kbd.open { display: block; }
+
+    /* simple-keyboard dark theme overrides */
+    #virtual-kbd .simple-keyboard { background: transparent; padding: 0; }
+    #virtual-kbd .hg-theme-default { background: transparent; border-radius: 0; }
+    #virtual-kbd .hg-theme-default .hg-row { margin-bottom: 4px; }
+    #virtual-kbd .hg-theme-default .hg-button {
+      background: var(--btn-bg);
+      color: var(--text);
+      border-bottom: 2px solid #222;
+      border-radius: 5px;
+      font-family: monospace;
+      font-size: 12px;
+      height: 38px;
+      box-shadow: none;
+      flex-shrink: 1;
+    }
+    #virtual-kbd .hg-theme-default .hg-button:active { background: var(--btn-active); }
+    /* Sticky key active state */
+    #virtual-kbd .hg-theme-default .hg-button.hg-activeButton { background: #005533; color: var(--text); }
+    /* Wider keys */
+    #virtual-kbd .hg-theme-default .hg-button[data-skbtn="{bksp}"],
+    #virtual-kbd .hg-theme-default .hg-button[data-skbtn="{enter}"] { max-width: 80px; }
+    #virtual-kbd .hg-theme-default .hg-button[data-skbtn="{shift}"] { max-width: 90px; }
+    #virtual-kbd .hg-theme-default .hg-button[data-skbtn="{space}"] { max-width: 240px; }
+
+    /* ── Topbar buttons ── */
+    .topbar-btn {
+      background: var(--btn-bg);
+      color: var(--text);
+      border: 1px solid var(--tab-border);
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 13px;
+      padding: 4px 10px;
+      cursor: pointer;
+      white-space: nowrap;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .topbar-btn:active { background: var(--btn-active); }
+    .topbar-btn.active { background: #005533; border-color: #007744; }
+    #btn-kbd-config { margin-left: auto; }
+
+    /* ── Keyboard settings panel ── */
+    #kbd-settings {
+      display: none;
+      flex-direction: column;
+      background: var(--tab-bg);
+      border-top: 1px solid var(--tab-border);
+      padding: 12px;
+      gap: 10px;
+      max-height: 55vh;
+      overflow-y: auto;
+      flex-shrink: 0;
+    }
+    #kbd-settings.open { display: flex; }
+
+    .kbds-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 13px;
+    }
+    .kbds-done-btn {
+      background: #005533;
+      color: var(--text);
+      border: 1px solid #007744;
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 13px;
+      padding: 4px 14px;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .kbds-done-btn:active { background: #007744; }
+
+    .kbds-size-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .kbds-label { font-size: 12px; color: var(--text-dim); min-width: 30px; }
+    .kbds-size-btns { display: flex; gap: 4px; }
+    .kbds-size-btn {
+      background: var(--btn-bg);
+      color: var(--text-dim);
+      border: 1px solid var(--tab-border);
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 13px;
+      padding: 4px 10px;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .kbds-size-btn.active { background: #005533; color: var(--text); border-color: #007744; }
+    .kbds-size-btn:active { background: var(--btn-active); }
+
+    .kbds-grid { display: grid; gap: 6px; }
+    .kbd-slot-select {
+      background: #222;
+      color: var(--text);
+      border: 1px solid var(--tab-border);
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 12px;
+      padding: 6px 4px;
+      width: 100%;
+      cursor: pointer;
+      outline: none;
+    }
+
+    /* ── Notification settings panel ── */
+    #notif-settings {
+      display: none;
+      flex-direction: column;
+      background: var(--tab-bg);
+      border-top: 1px solid var(--tab-border);
+      padding: 12px;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+    #notif-settings.open { display: flex; }
+
+    .notif-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 13px;
+    }
+    .notif-done-btn {
+      background: #005533;
+      color: var(--text);
+      border: 1px solid #007744;
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 13px;
+      padding: 4px 14px;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .notif-done-btn:active { background: #007744; }
+
+    .notif-label { font-size: 12px; color: var(--text-dim); padding: 2px 0; }
+
+    .notif-actions { display: flex; gap: 8px; }
+    .notif-btn {
+      flex: 1;
+      background: var(--btn-bg);
+      color: var(--text);
+      border: 1px solid var(--tab-border);
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 13px;
+      padding: 8px;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .notif-btn:active { background: var(--btn-active); }
+    .notif-btn:disabled { opacity: 0.4; cursor: default; }
+
+    #notif-status { font-size: 12px; min-height: 16px; }
+    #notif-status.ok  { color: #0f0; }
+    #notif-status.err { color: #f55; }
+
+    /* ── Layout root ── */
+    #app {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      height: 100dvh;
+    }
+  </style>
+</head>
+<body>
+<div id="app">
+  <div id="topbar">
+    <div id="status-dot" title="WebSocket disconnected"></div>
+    <span style="color:var(--text-dim);font-size:13px;">ClaudeBud</span>
+    <button id="btn-notif" class="topbar-btn" title="Notification settings">&#128276;</button>
+    <button id="btn-kbd-config"  class="topbar-btn" title="Configure buttons">&#9881;</button>
+  </div>
+  <div id="tabbar"></div>
+  <div id="terminal-wrap">
+    <div id="no-sessions">
+      <div>No active sessions</div>
+      <div style="font-size:12px;color:var(--text-dim);">Run <code>claudebud</code> in a terminal to start a session</div>
+    </div>
+  </div>
+  <div id="kbdbar"></div>
+  <div id="virtual-kbd"></div>
+  <div id="notif-settings">
+    <div class="notif-header">
+      <span>Notifications</span>
+      <button class="notif-done-btn" id="notif-settings-close">Done</button>
+    </div>
+    <div id="notif-status-row" class="notif-label"></div>
+    <div class="notif-actions">
+      <button class="notif-btn" id="notif-enable">Enable notifications</button>
+      <button class="notif-btn" id="notif-test">Send test</button>
+    </div>
+    <div id="notif-status"></div>
+  </div>
+  <div id="kbd-settings">
+    <div class="kbds-header">
+      <span>Configure Buttons</span>
+      <button class="kbds-done-btn" id="kbd-settings-close">Done</button>
+    </div>
+    <div class="kbds-size-row">
+      <span class="kbds-label">Rows</span>
+      <div class="kbds-size-btns" id="kbd-rows-btns">
+        <button class="kbds-size-btn" data-val="1">1</button>
+        <button class="kbds-size-btn" data-val="2">2</button>
+        <button class="kbds-size-btn" data-val="3">3</button>
+      </div>
+      <span class="kbds-label" style="margin-left:8px;">Cols</span>
+      <div class="kbds-size-btns" id="kbd-cols-btns">
+        <button class="kbds-size-btn" data-val="2">2</button>
+        <button class="kbds-size-btn" data-val="3">3</button>
+        <button class="kbds-size-btn" data-val="4">4</button>
+        <button class="kbds-size-btn" data-val="5">5</button>
+      </div>
+    </div>
+    <div id="kbd-settings-grid" class="kbds-grid"></div>
+  </div>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  // ── State ──────────────────────────────────────────────────────────────────
+  const sessions = {};  // id -> { name, number, status, term, fitAddon, container, tab, dot, label }
+  let activeId = null;
+
+  // ── DOM refs ───────────────────────────────────────────────────────────────
+  const tabbar     = document.getElementById('tabbar');
+  const termWrap   = document.getElementById('terminal-wrap');
+  const noSessions = document.getElementById('no-sessions');
+  const statusDot  = document.getElementById('status-dot');
+  const virtualKbd = document.getElementById('virtual-kbd');
+
+  // ── xterm theme ───────────────────────────────────────────────────────────
+  const THEME = {
+    background:    '#1a1a1a',
+    foreground:    '#00ff88',
+    cursor:        '#00ff88',
+    cursorAccent:  '#1a1a1a',
+    black:         '#1a1a1a',
+    brightBlack:   '#555',
+    red:           '#f55',
+    brightRed:     '#f77',
+    green:         '#0f0',
+    brightGreen:   '#5f5',
+    yellow:        '#fa0',
+    brightYellow:  '#fc6',
+    blue:          '#55f',
+    brightBlue:    '#88f',
+    magenta:       '#c5f',
+    brightMagenta: '#e8f',
+    cyan:          '#0dd',
+    brightCyan:    '#5ee',
+    white:         '#ccc',
+    brightWhite:   '#fff',
+  };
+
+  // ── WebSocket ──────────────────────────────────────────────────────────────
+  let ws = null;
+  let reconnectDelay = 1000;
+  const MAX_RECONNECT = 30000;
+
+  function connect() {
+    ws = new WebSocket(`ws://${location.host}/ws`);
+
+    ws.onopen = () => {
+      statusDot.className = 'connected';
+      statusDot.title = 'Connected';
+      reconnectDelay = 1000;
+    };
+
+    ws.onclose = ws.onerror = () => {
+      statusDot.className = '';
+      statusDot.title = 'Disconnected — reconnecting...';
+      setTimeout(connect, reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 1.5, MAX_RECONNECT);
+    };
+
+    ws.onmessage = (ev) => {
+      let msg;
+      try { msg = JSON.parse(ev.data); } catch { return; }
+      handleMessage(msg);
+    };
+  }
+
+  function send(obj) {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+  }
+
+  function sendInput(data) {
+    if (activeId) send({ type: 'input', session_id: activeId, data });
+  }
+
+  // ── Message handling ───────────────────────────────────────────────────────
+  function handleMessage(msg) {
+    switch (msg.type) {
+      case 'sessions_snapshot': msg.sessions.forEach(addSession); break;
+      case 'session_added':     addSession(msg);                  break;
+      case 'session_removed':   removeSession(msg.session_id);    break;
+      case 'session_renamed':   renameSession(msg.session_id, msg.name); break;
+      case 'session_status':    setStatus(msg.session_id, msg.status);   break;
+      case 'output':            appendOutput(msg.session_id, msg.data);  break;
+      case 'session_history':   appendOutput(msg.session_id, msg.data);  break;
+      case 'terminal_resize':   applyTerminalSize(msg.session_id, msg.cols, msg.rows); break;
+    }
+  }
+
+  function applyTerminalSize(sid, cols, rows) {
+    const s = sessions[sid];
+    if (!s) return;
+    s.serverCols = cols;
+    s.serverRows = rows;
+    try { s.term.resize(cols, rows); } catch {}
+  }
+
+  // ── Session lifecycle ──────────────────────────────────────────────────────
+  function addSession(info) {
+    if (sessions[info.session_id]) return;
+
+    // xterm.js terminal
+    const container = document.createElement('div');
+    container.className = 'term-container';
+    container.dataset.sid = info.session_id;
+    termWrap.appendChild(container);
+
+    const term = new Terminal({
+      theme: THEME,
+      fontFamily: '"Cascadia Code", "Fira Code", "Courier New", monospace',
+      fontSize: 13,
+      lineHeight: 1.2,
+      scrollback: 2000,
+      convertEol: false,  // pty output already has \r\n; true caused double-conversion
+      cursorBlink: false,
+      disableStdin: true,   // input goes via the buttons, not the terminal
+    });
+    const fitAddon = new FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(container);
+    // Use PC terminal dimensions if provided; fall back to fitting the viewport.
+    if (info.terminal_cols && info.terminal_rows) {
+      try { term.resize(info.terminal_cols, info.terminal_rows); } catch {}
+    } else {
+      try { fitAddon.fit(); } catch {}
+    }
+
+    // Tab element
+    const tab = document.createElement('div');
+    tab.className = 'tab';
+    tab.dataset.sid = info.session_id;
+
+    const dot = document.createElement('span');
+    dot.className = 'tab-status';
+
+    const label = document.createElement('span');
+    label.className = 'tab-label';
+    label.textContent = info.name;
+
+    tab.appendChild(dot);
+    tab.appendChild(label);
+    tabbar.appendChild(tab);
+
+    // Short tap → switch session; long press (600ms) → rename
+    let _lpTimer = null;
+    tab.addEventListener('pointerdown', () => {
+      _lpTimer = setTimeout(() => { _lpTimer = null; startRename(info.session_id, label); }, 600);
+    });
+    tab.addEventListener('pointerup', () => {
+      if (_lpTimer !== null) { clearTimeout(_lpTimer); _lpTimer = null; activateSession(info.session_id); }
+    });
+    tab.addEventListener('pointercancel', () => { if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; } });
+
+    const serverCols = info.terminal_cols || 0;
+    const serverRows = info.terminal_rows || 0;
+    sessions[info.session_id] = { name: info.name, number: info.number,
+      status: info.status || 'running', term, fitAddon, container, tab, dot, label,
+      serverCols, serverRows };
+
+    setStatus(info.session_id, info.status || 'running');
+    noSessions.style.display = 'none';
+
+    if (!activeId) activateSession(info.session_id);
+  }
+
+  function removeSession(sid) {
+    const s = sessions[sid];
+    if (!s) return;
+    s.tab.remove();
+    s.term.dispose();
+    s.container.remove();
+    delete sessions[sid];
+
+    if (activeId === sid) {
+      activeId = null;
+      const ids = Object.keys(sessions);
+      if (ids.length) activateSession(ids[ids.length - 1]);
+      else noSessions.style.display = '';
+    }
+  }
+
+  function activateSession(sid) {
+    if (activeId) {
+      const prev = sessions[activeId];
+      if (prev) {
+        prev.tab.classList.remove('active');
+        prev.container.classList.remove('active');
+      }
+    }
+    activeId = sid;
+    const s = sessions[sid];
+    if (!s) return;
+    s.tab.classList.add('active');
+    s.container.classList.add('active');
+    requestAnimationFrame(() => safeFit(sid));
+  }
+
+  function renameSession(sid, name) {
+    const s = sessions[sid];
+    if (!s) return;
+    s.name = name;
+    s.label.textContent = name;
+  }
+
+  function setStatus(sid, status) {
+    const s = sessions[sid];
+    if (!s) return;
+    s.status = status;
+    s.dot.className = 'tab-status ' + status;
+  }
+
+  // ── Output ─────────────────────────────────────────────────────────────────
+  function appendOutput(sid, data) {
+    const s = sessions[sid];
+    if (!s) return;
+    s.term.write(data);
+  }
+
+  // ── Rename inline ──────────────────────────────────────────────────────────
+  function startRename(sid, labelEl) {
+    const s = sessions[sid];
+    if (!s) return;
+    const input = document.createElement('input');
+    input.className = 'tab-label-input';
+    input.value = s.name;
+    labelEl.replaceWith(input);
+    input.focus();
+    input.select();
+
+    function commit() {
+      const newName = input.value.trim();
+      if (newName) { send({ type: 'rename', session_id: sid, name: newName }); s.name = newName; }
+      input.replaceWith(labelEl);
+      labelEl.textContent = s.name;
+    }
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter')  { e.preventDefault(); commit(); }
+      if (e.key === 'Escape') { input.replaceWith(labelEl); }
+    });
+    input.addEventListener('blur', commit);
+  }
+
+  // ── Resize handling ────────────────────────────────────────────────────────
+  function debounce(fn, ms) {
+    let t;
+    return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+  }
+
+  // fit() resets the xterm.js viewport, causing scroll jumps.
+  // Save viewportY before fit and restore it if the user had scrolled up.
+  function safeFit(sid) {
+    const s = sessions[sid];
+    if (!s) return;
+    // Only fit to viewport if we don't have a server-authoritative size.
+    // The PC terminal owns the pty dimensions; resizing from the phone would
+    // cause Claude to redraw and overwrite the ClaudeBud banner.
+    if (s.serverCols && s.serverRows) return;
+    const buf      = s.term.buffer.active;
+    const viewY    = buf.viewportY;
+    const atBottom = viewY >= buf.length - s.term.rows;
+    try { s.fitAddon.fit(); } catch {}
+    if (!atBottom) { try { s.term.scrollToLine(viewY); } catch {} }
+  }
+
+  const resizeObserver = new ResizeObserver(debounce(() => {
+    if (activeId) safeFit(activeId);
+  }, 120));
+  resizeObserver.observe(termWrap);
+
+  window.addEventListener('resize', debounce(() => {
+    if (activeId) safeFit(activeId);
+  }, 120));
+
+  // ── Button definitions ─────────────────────────────────────────────────────
+  // Ordered by frequency of use in Claude Code sessions
+  const BUTTON_DEFS = [
+    { id: 'empty',     label: '—',       title: 'Empty',                  data: null       },
+    { id: 'up',        label: '↑',       title: 'Up',                     data: '\x1b[A'   },
+    { id: 'down',      label: '↓',       title: 'Down',                   data: '\x1b[B'   },
+    { id: 'enter',     label: 'Enter',   title: 'Enter',                  data: '\r'        },
+    { id: 'esc',       label: 'Esc',     title: 'Escape',                 data: '\x1b'     },
+    { id: 'shifttab',  label: 'Shift+Tab', title: 'Shift+Tab  (plan mode)', data: '\x1b[Z'   },
+    { id: 'ctrlc',     label: 'Ctrl+C',  title: 'Interrupt',              data: '\x03'     },
+    { id: 'tab',       label: 'Tab',     title: 'Tab',                    data: '\t'        },
+    { id: 'left',      label: '←',       title: 'Left',                   data: '\x1b[D'   },
+    { id: 'right',     label: '→',       title: 'Right',                  data: '\x1b[C'   },
+    { id: 'space',     label: '␣',       title: 'Space',                  data: ' '         },
+    { id: 'backspace', label: '⌫',       title: 'Backspace',              data: '\x7f'     },
+    { id: 'ctrld',     label: 'Ctrl+D',  title: 'EOF / Exit',             data: '\x04'     },
+    { id: 'ctrll',     label: 'Ctrl+L',  title: 'Clear screen',           data: '\x0c'     },
+    { id: 'ctrlu',     label: 'Ctrl+U',  title: 'Clear line',             data: '\x15'     },
+    { id: 'ctrlw',     label: 'Ctrl+W',  title: 'Delete word back',       data: '\x17'     },
+    { id: 'slash',     label: '/',       title: 'Slash  (/ command)',      data: '/'         },
+    { id: 'pgup',      label: 'PgUp',    title: 'Page Up',                data: '\x1b[5~'  },
+    { id: 'pgdn',      label: 'PgDn',    title: 'Page Down',              data: '\x1b[6~'  },
+    { id: 'home',      label: 'Home',    title: 'Home',                   data: '\x1b[H'   },
+    { id: 'end',       label: 'End',     title: 'End',                    data: '\x1b[F'   },
+    { id: 'num1',      label: '1',       title: '1',                      data: '1'         },
+    { id: 'num2',      label: '2',       title: '2',                      data: '2'         },
+    { id: 'num3',      label: '3',       title: '3',                      data: '3'         },
+    // ── Alt combos ────────────────────────────────────────────────────────────
+    { id: 'altv',      label: 'Alt+V',   title: 'Alt+V  (paste image)',    data: '\x1bv'    },
+    { id: 'altdot',    label: 'Alt+.',   title: 'Alt+.  (last argument)',  data: '\x1b.'    },
+  ];
+  const BTN_MAP = Object.fromEntries(BUTTON_DEFS.map(b => [b.id, b]));
+
+  // Default 2×3 grid — last position (bottom-right) is always the keyboard toggle, not a slot
+  const DEFAULT_KBD_CFG = { rows: 2, cols: 3, slots: ['up','down','enter','esc','shifttab'] };
+
+  function loadKbdConfig() {
+    try {
+      const c = JSON.parse(localStorage.getItem('claudebud_kbd_config') || '');
+      if (Number.isInteger(c.rows) && Number.isInteger(c.cols) && Array.isArray(c.slots)) return c;
+    } catch {}
+    return { ...DEFAULT_KBD_CFG, slots: [...DEFAULT_KBD_CFG.slots] };
+  }
+  function saveKbdConfig() {
+    localStorage.setItem('claudebud_kbd_config', JSON.stringify(kbdConfig));
+  }
+
+  let kbdConfig = loadKbdConfig();
+  const kbdbar = document.getElementById('kbdbar');
+
+  function refitActive() {
+    if (!activeId) return;
+    requestAnimationFrame(() => safeFit(activeId));
+  }
+
+  // Build the keyboard-toggle button that always sits in the bottom-right slot.
+  // Re-created on every renderKbdBar() so its label reflects the current mode.
+  function makeKbdToggleBtn() {
+    const btn = document.createElement('button');
+    btn.className = 'kbd-btn';
+    btn.title = kbdMode === 'pc' ? 'Hide PC keyboard' : 'Show PC keyboard';
+    btn.textContent = kbdMode === 'pc' ? '\u2328 PC' : '\u2328';
+    btn.addEventListener('click', () =>
+      applyKbdMode(kbdMode === 'pc' ? 'normal' : 'pc'));
+    return btn;
+  }
+
+  function renderKbdBar() {
+    kbdbar.innerHTML = '';
+    const row = document.createElement('div');
+    row.className = 'kbd-row';
+
+    if (kbdMode === 'normal') {
+      // Simple text input — tapping it opens the phone's system keyboard
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'normal-kbd-input';
+      input.placeholder = 'Type here, Enter to send…';
+      input.autocomplete = 'off';
+      input.setAttribute('autocorrect', 'off');
+      input.setAttribute('autocapitalize', 'none');
+      input.spellcheck = false;
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          if (input.value) { sendInput(input.value + '\r'); input.value = ''; }
+          else             { sendInput('\r'); }
+        }
+      });
+      row.appendChild(input);
+      row.appendChild(makeKbdToggleBtn());
+      kbdbar.appendChild(row);
+      requestAnimationFrame(() => input.focus());
+      return;
+    }
+
+    // Button grid (pc mode — shows alongside the virtual keyboard)
+    const { rows, cols, slots } = kbdConfig;
+    const lastSlot = rows * cols - 1;
+    for (let r = 0; r < rows; r++) {
+      const r2 = document.createElement('div');
+      r2.className = 'kbd-row';
+      for (let c = 0; c < cols; c++) {
+        const idx = r * cols + c;
+        if (idx === lastSlot) {
+          r2.appendChild(makeKbdToggleBtn());
+        } else {
+          const def = BTN_MAP[slots[idx]] || BTN_MAP['empty'];
+          const btn = document.createElement('button');
+          btn.className = 'kbd-btn';
+          btn.title = def.title;
+          btn.textContent = def.label;
+          if (def.data !== null) {
+            btn.addEventListener('click', () => sendInput(def.data));
+          } else {
+            btn.disabled = true;
+            btn.style.opacity = '0.15';
+          }
+          r2.appendChild(btn);
+        }
+      }
+      kbdbar.appendChild(r2);
+    }
+  }
+
+  // ── Keyboard settings panel ────────────────────────────────────────────────
+  const kbdSettings = document.getElementById('kbd-settings');
+
+  function renderKbdSettings() {
+    const { rows, cols, slots } = kbdConfig;
+    document.querySelectorAll('#kbd-rows-btns .kbds-size-btn').forEach(b =>
+      b.classList.toggle('active', parseInt(b.dataset.val) === rows));
+    document.querySelectorAll('#kbd-cols-btns .kbds-size-btn').forEach(b =>
+      b.classList.toggle('active', parseInt(b.dataset.val) === cols));
+
+    const grid = document.getElementById('kbd-settings-grid');
+    grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+    grid.innerHTML = '';
+
+    // rows*cols - 1: last position is always the fixed keyboard toggle, not configurable
+    for (let i = 0; i < rows * cols - 1; i++) {
+      const current = slots[i] || 'empty';
+      const sel = document.createElement('select');
+      sel.className = 'kbd-slot-select';
+      BUTTON_DEFS.forEach(def => {
+        const opt = document.createElement('option');
+        opt.value = def.id;
+        opt.textContent = def.label ? `${def.label} — ${def.title}` : `— ${def.title}`;
+        if (def.id === current) opt.selected = true;
+        sel.appendChild(opt);
+      });
+      sel.addEventListener('change', () => {
+        kbdConfig.slots[i] = sel.value;
+        saveKbdConfig();
+        renderKbdBar();
+      });
+      grid.appendChild(sel);
+    }
+  }
+
+  document.querySelectorAll('#kbd-rows-btns .kbds-size-btn').forEach(b => {
+    b.addEventListener('click', () => {
+      const n = parseInt(b.dataset.val);
+      if (n === kbdConfig.rows) return;
+      kbdConfig.rows = n;
+      const total = kbdConfig.rows * kbdConfig.cols - 1;  // last slot is fixed toggle
+      while (kbdConfig.slots.length < total) kbdConfig.slots.push('empty');
+      saveKbdConfig();
+      renderKbdBar();
+      renderKbdSettings();
+      refitActive();
+    });
+  });
+
+  document.querySelectorAll('#kbd-cols-btns .kbds-size-btn').forEach(b => {
+    b.addEventListener('click', () => {
+      const n = parseInt(b.dataset.val);
+      if (n === kbdConfig.cols) return;
+      kbdConfig.cols = n;
+      const total = kbdConfig.rows * kbdConfig.cols - 1;  // last slot is fixed toggle
+      while (kbdConfig.slots.length < total) kbdConfig.slots.push('empty');
+      saveKbdConfig();
+      renderKbdBar();
+      renderKbdSettings();
+    });
+  });
+
+  const kbdConfigBtn = document.getElementById('btn-kbd-config');
+  kbdConfigBtn.addEventListener('click', () => {
+    const open = kbdSettings.classList.toggle('open');
+    kbdConfigBtn.classList.toggle('active', open);
+    if (open) renderKbdSettings();
+    refitActive();
+  });
+
+  document.getElementById('kbd-settings-close').addEventListener('click', () => {
+    kbdSettings.classList.remove('open');
+    kbdConfigBtn.classList.remove('active');
+    refitActive();
+  });
+
+  // ── Keyboard mode (normal ↔ pc) ────────────────────────────────────────────
+  // The toggle lives as the bottom-right button of the kbdbar (always visible).
+  // kbdbar is never hidden — only the virtual PC keyboard panel toggles.
+  let kbdMode = 'normal';
+  let simpleKbd = null;
+
+  function initVirtualKeyboard() {
+    if (simpleKbd) return;
+    // Sticky modifier state
+    let ctrlOn = false, altOn = false;
+
+    function updateModifier(btn, el) {
+      el.classList.toggle('hg-activeButton', btn);
+    }
+
+    simpleKbd = new SimpleKeyboard.default(virtualKbd, {
+      onKeyPress(button) {
+        switch (button) {
+          case '{shift}': case '{lock}':
+            // simple-keyboard handles layout switch internally via handleButtonClicked
+            return;
+          case '{ctrl}':
+            ctrlOn = !ctrlOn;
+            document.querySelectorAll('[data-skbtn="{ctrl}"]').forEach(el =>
+              el.classList.toggle('hg-activeButton', ctrlOn));
+            return;
+          case '{alt}':
+            altOn = !altOn;
+            document.querySelectorAll('[data-skbtn="{alt}"]').forEach(el =>
+              el.classList.toggle('hg-activeButton', altOn));
+            return;
+          case '{enter}': sendInput('\r');    break;
+          case '{bksp}':  sendInput('\x7f');  break;
+          case '{tab}':   sendInput('\t');    break;
+          case '{esc}':   sendInput('\x1b');  break;
+          case '{space}': sendInput(altOn ? '\x1b ' : ' '); altOn = false; break;
+          default:
+            if (button.startsWith('{')) break;
+            if (ctrlOn) {
+              const code = button.toLowerCase().charCodeAt(0) - 96;
+              if (code >= 1 && code <= 26) sendInput(String.fromCharCode(code));
+              ctrlOn = false;
+              document.querySelectorAll('[data-skbtn="{ctrl}"]').forEach(el =>
+                el.classList.remove('hg-activeButton'));
+            } else if (altOn) {
+              sendInput('\x1b' + button);
+              altOn = false;
+              document.querySelectorAll('[data-skbtn="{alt}"]').forEach(el =>
+                el.classList.remove('hg-activeButton'));
+            } else {
+              sendInput(button);
+            }
+        }
+        // Auto-release shift after one keypress (not for Ctrl/Alt — those are sticky until used)
+        if (!button.startsWith('{') || button === '{space}' || button === '{enter}' ||
+            button === '{bksp}' || button === '{tab}' || button === '{esc}') {
+          if (simpleKbd.options.layoutName === 'shift') {
+            simpleKbd.setOptions({ layoutName: 'default' });
+          }
+        }
+      },
+      onChange() {},   // required by simple-keyboard but we use onKeyPress
+      layout: {
+        default: [
+          '` 1 2 3 4 5 6 7 8 9 0 - = {bksp}',
+          '{tab} q w e r t y u i o p [ ] \\',
+          '{lock} a s d f g h j k l ; \' {enter}',
+          '{shift} z x c v b n m , . / {shift}',
+          '{ctrl} {alt} {space} {alt} {esc}',
+        ],
+        shift: [
+          '~ ! @ # $ % ^ & * ( ) _ + {bksp}',
+          '{tab} Q W E R T Y U I O P { } |',
+          '{lock} A S D F G H J K L : " {enter}',
+          '{shift} Z X C V B N M < > ? {shift}',
+          '{ctrl} {alt} {space} {alt} {esc}',
+        ],
+      },
+      display: {
+        '{bksp}':  '⌫',  '{enter}': '↵',  '{shift}': '⇧',
+        '{tab}':   'Tab', '{lock}':  'Caps', '{space}': 'Space',
+        '{ctrl}':  'Ctrl', '{alt}': 'Alt',  '{esc}': 'Esc',
+      },
+      useMouseEvents: true,
+    });
+
+    // Wire Shift/Caps to layout toggle
+    virtualKbd.addEventListener('pointerdown', (e) => {
+      const btn = e.target.closest('[data-skbtn]');
+      if (!btn) return;
+      const key = btn.dataset.skbtn;
+      if (key === '{shift}') {
+        simpleKbd.setOptions({ layoutName: simpleKbd.options.layoutName === 'shift' ? 'default' : 'shift' });
+        simpleKbd.render();
+      } else if (key === '{lock}') {
+        simpleKbd.setOptions({ layoutName: simpleKbd.options.layoutName === 'shift' ? 'default' : 'shift' });
+        simpleKbd.render();
+      }
+    }, true);
+  }
+
+  function applyKbdMode(mode) {
+    kbdMode = mode;
+    if (mode === 'pc') {
+      virtualKbd.classList.add('open');
+      initVirtualKeyboard();
+    } else {
+      virtualKbd.classList.remove('open');
+    }
+    renderKbdBar();  // re-render so toggle button label updates
+    refitActive();
+  }
+
+  renderKbdBar();
+
+  // ── Web Push notification management ──────────────────────────────────────
+  const notifSettings  = document.getElementById('notif-settings');
+  const notifBtn       = document.getElementById('btn-notif');
+  const notifStatusEl  = document.getElementById('notif-status');
+  const notifStatusRow = document.getElementById('notif-status-row');
+  const notifEnableBtn = document.getElementById('notif-enable');
+  let _swReg      = null;
+  let _pushEnabled = false;
+
+  function notifSetStatus(msg, cls) {
+    notifStatusEl.textContent = msg;
+    notifStatusEl.className = cls || '';
+  }
+
+  function _b64ToUint8(b) {
+    const p = '='.repeat((4 - b.length % 4) % 4);
+    const s = atob((b + p).replace(/-/g, '+').replace(/_/g, '/'));
+    return Uint8Array.from(s, c => c.charCodeAt(0));
+  }
+
+  async function _refreshNotifStatus() {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      notifStatusRow.textContent = 'Not supported in this browser (requires HTTPS)';
+      notifEnableBtn.disabled = true;
+      return;
+    }
+    try {
+      const d = await fetch('/config/notifications').then(r => r.json());
+      _pushEnabled = d.enabled;
+      notifStatusRow.textContent = _pushEnabled ? 'Status: enabled' : 'Status: disabled';
+      notifEnableBtn.textContent = _pushEnabled ? 'Disable' : 'Enable notifications';
+    } catch { notifStatusRow.textContent = 'Could not load status'; }
+  }
+
+  async function _enablePush() {
+    notifSetStatus('Requesting permission…');
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') { notifSetStatus('Permission denied.', 'err'); return; }
+    if (!_swReg) { notifSetStatus('Service worker not ready — reload the page.', 'err'); return; }
+    try {
+      const key = await fetch('/push/vapid-public-key').then(r => r.json()).then(d => d.vapid_public_key);
+      const sub = await _swReg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: _b64ToUint8(key),
+      });
+      await fetch('/push/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(sub.toJSON()),
+      });
+      _pushEnabled = true;
+      notifEnableBtn.textContent = 'Disable';
+      notifStatusRow.textContent = 'Status: enabled';
+      notifSetStatus('Notifications enabled!', 'ok');
+    } catch (e) { notifSetStatus('Error: ' + e.message, 'err'); }
+  }
+
+  async function _disablePush() {
+    try {
+      if (_swReg) {
+        const s = await _swReg.pushManager.getSubscription();
+        if (s) await s.unsubscribe();
+      }
+      await fetch('/push/subscribe', { method: 'DELETE' });
+      _pushEnabled = false;
+      notifEnableBtn.textContent = 'Enable notifications';
+      notifStatusRow.textContent = 'Status: disabled';
+      notifSetStatus('Disabled.', 'ok');
+    } catch (e) { notifSetStatus('Error: ' + e.message, 'err'); }
+  }
+
+  notifEnableBtn.addEventListener('click', () => _pushEnabled ? _disablePush() : _enablePush());
+
+  document.getElementById('notif-test').addEventListener('click', async () => {
+    notifSetStatus('Sending…');
+    try {
+      const r = await fetch('/config/notifications/test', { method: 'POST' });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        throw new Error(d.detail || r.status);
+      }
+      notifSetStatus('Test sent!', 'ok');
+    } catch (e) { notifSetStatus('Error: ' + e.message, 'err'); }
+  });
+
+  notifBtn.addEventListener('click', () => {
+    const open = notifSettings.classList.toggle('open');
+    notifBtn.classList.toggle('active', open);
+    if (open) { _refreshNotifStatus(); notifSetStatus(''); }
+    refitActive();
+  });
+
+  document.getElementById('notif-settings-close').addEventListener('click', () => {
+    notifSettings.classList.remove('open');
+    notifBtn.classList.remove('active');
+    refitActive();
+  });
+
+  // Register service worker (must complete before subscribe is possible)
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js', { scope: '/' })
+      .then(() => navigator.serviceWorker.ready)
+      .then(reg => { _swReg = reg; })
+      .catch(err => console.warn('SW registration failed:', err));
+  }
+
+  // ── Boot ───────────────────────────────────────────────────────────────────
+  connect();
+})();
+</script>
+</body>
+</html>
