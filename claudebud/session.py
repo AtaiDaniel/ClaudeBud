@@ -121,10 +121,10 @@ class _BannerOverwriter:
     Returns a (pc_data, phone_data) tuple so the PC and phone can get
     different representations:
     - PC gets cursor-magic overwrite (rewrites rows 1-3 + inserts extra rows)
-    - Phone gets a simple text append (no cursor tricks — xterm.js handles
-      cursor-repositioning sequences differently from native terminals and
-      the insert-lines approach was causing the banner to appear in the wrong
-      position on the phone)
+    - Phone gets a 3-row overwrite using only absolute cursor positioning
+      (no insert-lines, no DEC save/restore — those caused the banner to
+      appear in the wrong place on xterm.js; Claude's UI redraws also
+      erased any extra appended rows, so all info fits in the original 3)
     """
 
     _MAX_SEEN = 8_000   # stop tracking after this many bytes
@@ -167,8 +167,8 @@ class _BannerOverwriter:
             return data, data  # keep watching
 
         self._done = True
-        pc_extra   = self._build_pc_overwrite(info[0], info[1], info[2])
-        phone_extra = self._build_phone_append()
+        pc_extra    = self._build_pc_overwrite(info[0], info[1], info[2])
+        phone_extra = self._build_phone_overwrite(info[0], info[1])
         return (
             data + pc_extra.encode("utf-8"),
             data + phone_extra.encode("utf-8"),
@@ -203,21 +203,35 @@ class _BannerOverwriter:
             + f"\x1b[{extra}B"      # compensate for the inserted lines
         )
 
-    def _build_phone_append(self) -> str:
-        """Simple text-only banner for the phone — no cursor repositioning.
-        Appended directly after Claude's banner output; xterm.js displays it
-        naturally without any scroll/positioning side-effects."""
+    def _build_phone_overwrite(self, version: str, model: str) -> str:
+        """Minimal banner rewrite for the phone's xterm.js.
+
+        Overwrites only the 3 existing Claude banner rows — no insert-lines,
+        no DEC save/restore cursor.  The third row shows ClaudeBud version
+        and the local URL instead of the working-directory path (which is less
+        useful on a phone and allowed us to skip extra rows entirely).
+
+        Without insert-lines the cursor lands at row 4 after the write, which
+        is exactly where Claude's separator line is, so Claude's subsequent
+        cursor sequences position everything correctly from there.
+        """
         from . import __version__ as _cbv
-        lines = [
-            f"  {_CB}+ ClaudeBud v{_cbv}{_RST}",
-            f"  {_DIM}Local:    {_RST}{_CB}{self._local_url}{_RST}",
-        ]
+        url_part = f"{_CB}{self._local_url}{_RST}"
         if self._tailscale_url:
-            lines.append(
-                f"  {_DIM}External: {_RST}{_CB}{self._tailscale_url}{_RST}"
-                f"  {_DIM}(Tailscale){_RST}"
-            )
-        return "\r\n" + "\r\n".join(lines) + "\r\n"
+            url_part += f"  {_DIM}·{_RST}  {_CB}{self._tailscale_url}{_RST}"
+        row3 = (
+            f"\x1b[2K{_LOGO[2]}{_BUDDY[2]}"
+            f"{_CB}+ ClaudeBud v{_cbv}{_RST}  {_DIM}{url_part}"
+        )
+        rows = [
+            f"\x1b[2K{_LOGO[0]}{_BUDDY[0]}{version}",
+            f"\x1b[2K{_LOGO[1]}{_BUDDY[1]}{model}",
+            row3,
+        ]
+        return (
+            "\x1b[1;1H"        # jump to row 1 (no save/restore, no insert-lines)
+            + "\r\n".join(rows)
+        )
 
 
 class Session:
