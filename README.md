@@ -1,15 +1,19 @@
 # ClaudeBud
 
+[![PyPI version](https://img.shields.io/pypi/v/claudebud)](https://pypi.org/project/claudebud/)
+[![Python](https://img.shields.io/pypi/pyversions/claudebud)](https://pypi.org/project/claudebud/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
 Monitor and control [Claude Code](https://docs.anthropic.com/en/docs/claude-code/getting-started) CLI sessions from your phone.
 
 ClaudeBud is a **drop-in replacement for the `claude` command**. Type `claudebud` instead of `claude` — everything else is identical. Under the hood it wraps Claude Code in a pty, streams output to a background daemon, and serves a PWA web app on your local network so you can watch and interact with sessions from your phone.
 
 ## Features
 
-- **Push notifications** when Claude finishes or needs your input (via [ntfy](https://ntfy.sh))
-- **Live terminal view** on your phone
+- **Push notifications** when Claude finishes or needs your input (browser-native Web Push, no app needed)
+- **Live terminal view** on your phone with full session history
 - **Multi-session tabs** — one tab per `claudebud` invocation, with custom names via `-n`
-- **Minimal phone keyboard** — Up / Down / Enter plus a full-keyboard toggle
+- **Configurable keyboard** — customisable button grid + full virtual PC keyboard
 - **Remote access** via [Tailscale](https://tailscale.com) with no extra config
 - Works on **Windows**, **macOS**, and **Linux / WSL**
 
@@ -22,7 +26,7 @@ claudebud setup
 
 Requires Python 3.8+ and [Claude Code](https://docs.anthropic.com/en/docs/claude-code/getting-started).
 
-## Usage
+## Quick start
 
 ```bash
 # Drop-in replacement for 'claude':
@@ -34,11 +38,8 @@ claudebud -n my-project
 # All claude flags pass through unchanged:
 claudebud --model claude-opus-4-5 -p "summarise this file" < notes.txt
 
-# First-time setup (ntfy topic, autostart):
+# First-time setup (autostart, local URL):
 claudebud setup
-
-# Update claudebud (and optionally claude):
-claudebud update
 ```
 
 ## How it works
@@ -50,11 +51,11 @@ claudebud (any terminal)
     ▼
 ClaudeBud Daemon  (background, auto-started)
     │  FastAPI + WebSockets
-    │  detects prompts and completions, sends ntfy notifications
+    │  detects prompts and completions, sends Web Push notifications
     │  serves the PWA frontend
     ▼
 ClaudeBud PWA  (phone browser / home screen icon)
-    session tabs · live terminal · Up/Down/Enter keyboard
+    session tabs · live terminal · configurable keyboard
 ```
 
 The daemon starts automatically the first time you run `claudebud` and keeps running in the background. You never manage it directly.
@@ -63,24 +64,20 @@ The daemon starts automatically the first time you run `claudebud` and keeps run
 
 1. Run `claudebud setup` — it prints a URL like `http://192.168.1.42:3131`
 2. Open that URL in Chrome on your phone
-3. Tap the browser menu → **Add to Home Screen** for a PWA icon
-4. Subscribe to your ntfy topic in the [ntfy app](https://ntfy.sh)
+3. Tap **🔔** in the top bar → **Enable notifications** and accept the browser prompt
+4. Tap the browser menu → **Add to Home Screen** for a PWA icon
+
+For detailed instructions see [docs/setup.md](docs/setup.md).
 
 For access from outside your home network, use [Tailscale](https://tailscale.com) and open the URL with your machine's Tailscale IP instead.
 
 ## Notifications
 
-Uses [ntfy.sh](https://ntfy.sh) — free and open-source, no account required.
+Uses the browser's built-in **Web Push API** — no external app or account required. Works in Chrome on Android; Safari on iOS requires iOS 16.4+ with the app added to the home screen.
 
-```bash
-claudebud setup   # enter a unique topic name, e.g. "alice-claude-7x3k"
-```
-
-Install ntfy on your phone and subscribe to the same topic. You'll receive:
-- **⚠️ Claude needs input** — when Claude is waiting for approval
+You'll receive:
+- **⚠️ Claude needs input** — when Claude is waiting for your approval
 - **✅ Claude finished** — when a task completes
-
-Use a long random topic name to keep it private.
 
 ## Configuration
 
@@ -89,8 +86,6 @@ Use a long random topic name to keep it private.
 ```json
 {
   "port": 3131,
-  "ntfy_topic": "",
-  "ntfy_server": "https://ntfy.sh",
   "prompt_patterns": ["(Y/n)", "(y/N)", "Allow", "Approve"],
   "completion_patterns": ["Completed", "Task complete"],
   "max_scrollback_lines": 2000

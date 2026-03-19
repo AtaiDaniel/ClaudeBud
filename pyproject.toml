@@ -34,8 +34,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/ataid/claudebud"
-"Bug Tracker" = "https://github.com/ataid/claudebud/issues"
+Homepage = "https://github.com/AtaiDaniel/ClaudeBud"
+"Bug Tracker" = "https://github.com/AtaiDaniel/ClaudeBud/issues"
 
 [project.scripts]
 claudebud = "claudebud.cli:main"
