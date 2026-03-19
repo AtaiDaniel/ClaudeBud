@@ -7,6 +7,7 @@ kill-daemon.bat
 # Internal development docs (not useful for end users)
 BUILD_PLAN.md
 PROGRESS.md
+ISSUES.md
 
 # Python build artifacts
 __pycache__/
