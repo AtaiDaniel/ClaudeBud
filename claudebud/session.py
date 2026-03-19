@@ -164,21 +164,32 @@ class _BannerOverwriter:
         # Normalise Windows path separators so backslashes don't appear in the
         # terminal output stream (avoids stray '\' characters on Windows).
         path = path.replace("\\", "/")
-        url_part = f"  {_DIM}·{_RST}  {_CB}{self._local_url}{_RST}"
-        if self._tailscale_url:
-            url_part += f"  {_DIM}/{_RST}  {_CB}{self._tailscale_url}{_RST}{_DIM} (ext){_RST}"
-        cb_line = f"         {_CB}+ ClaudeBud v{_cbv}{_RST}{url_part}"
+        cb_line = f"\x1b[2K         {_CB}+ ClaudeBud v{_cbv}{_RST}"
         rows = [
             f"\x1b[2K{_LOGO[0]}{_BUDDY[0]}{version}",
             f"\x1b[2K{_LOGO[1]}{_BUDDY[1]}{model}",
             f"\x1b[2K{_LOGO[2]}{_BUDDY[2]}{_DIM}{path}{_RST}",
-            f"\x1b[2K{cb_line}",
+            cb_line,
+            f"\x1b[2K  {_DIM}Local:    {_RST}{_CB}{self._local_url}{_RST}",
         ]
+        if self._tailscale_url:
+            rows.append(
+                f"\x1b[2K  {_DIM}External: {_RST}{_CB}{self._tailscale_url}{_RST}"
+                f"  {_DIM}(Tailscale){_RST}"
+            )
+
+        # Claude's original banner is 3 lines. For every extra line we add,
+        # insert a blank line at row 4 first to push Claude's content down,
+        # then compensate the restored cursor position with \x1b[NB.
+        extra = len(rows) - 3
         return (
-            "\x1b7"        # DEC save cursor
-            "\x1b[1;1H"    # jump to row 1, col 1 (banner is always at top)
+            "\x1b7"                  # save cursor (after Claude's banner, ~row 4)
+            + "\x1b[4;1H"           # go to first line after Claude's 3-line banner
+            + f"\x1b[{extra}L"      # insert extra blank lines, pushing content down
+            + "\x1b[1;1H"           # jump to row 1
             + "\r\n".join(rows)
-            + "\x1b8"      # DEC restore cursor
+            + "\x1b8"               # restore cursor (to saved row 4, inside our banner)
+            + f"\x1b[{extra}B"      # move down to compensate → lands after our banner
         )
 
 
