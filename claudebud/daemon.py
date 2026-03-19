@@ -206,6 +206,51 @@ def get_static_dir() -> Path:
     return Path(__file__).parent / "static"
 
 
+# ── Version/model detection ───────────────────────────────────────────────────
+#
+# Claude Code's startup banner looks like (amid ANSI escapes):
+#   Claude Code v2.1.79
+#   Opus 4.6 (1M context) · Claude Max
+#   /path/to/working/dir
+#
+# We strip ANSI codes and logo block chars to extract plain text lines.
+
+import re as _re
+
+_ANSI_STRIP = _re.compile(
+    r"\x1b(?:"
+    r"\[[0-9;?]*[a-zA-Z]"
+    r"|\][^\x07\x1b]*(?:\x07|\x1b\\)"
+    r"|[=><!]"
+    r"|\(B"
+    r"|[0-9]"
+    r"|\\"
+    r")"
+)
+_CURSOR_RIGHT = _re.compile(r"\x1b\[(\d*)C")
+_LOGO_CHARS = frozenset("▐▛█▜▌▝▘▙▚▟▞▗▖▄▀▒░▓")
+_MAX_DETECT_CHARS = 8_000
+
+
+def _to_plain(raw: str) -> str:
+    """Strip ANSI escapes and convert cursor-right to spaces."""
+    def _cr(m: _re.Match) -> str:
+        return " " * (int(m.group(1)) if m.group(1) else 1)
+    return _ANSI_STRIP.sub("", _CURSOR_RIGHT.sub(_cr, raw))
+
+
+def _extract_version_model(plain: str):
+    """Return (version, model) from Claude's banner text, or (None, None)."""
+    info = []
+    for line in plain.splitlines():
+        text = "".join(c for c in line if c not in _LOGO_CHARS).strip()
+        if text:
+            info.append(text)
+        if len(info) == 2:
+            return info[0], info[1]
+    return None, None
+
+
 # ── Data structures ───────────────────────────────────────────────────────────
 
 HEARTBEAT_INTERVAL = 10   # session.py pings every 10s
@@ -224,6 +269,8 @@ class SessionInfo:
     output_buffer: list = field(default_factory=list)
     terminal_cols: int = 80
     terminal_rows: int = 24
+    claude_version: str = ""
+    claude_model: str = ""
 
 
 class SessionRegistry:
@@ -231,6 +278,7 @@ class SessionRegistry:
         self._sessions: Dict[str, SessionInfo] = {}
         self._input_queues: Dict[str, asyncio.Queue] = {}
         self._detectors: Dict[str, DebouncedDetector] = {}
+        self._detect_bufs: Dict[str, str] = {}   # raw text buffer for version detection
         self._counter: int = 0
         self._lock = asyncio.Lock()
 
@@ -245,6 +293,7 @@ class SessionRegistry:
             )
             self._sessions[session_id] = info
             self._input_queues[session_id] = asyncio.Queue()
+            self._detect_bufs[session_id] = ""
             return info
 
     async def unregister(self, session_id: str) -> None:
@@ -252,6 +301,26 @@ class SessionRegistry:
             self._sessions.pop(session_id, None)
             self._input_queues.pop(session_id, None)
             self._detectors.pop(session_id, None)
+            self._detect_bufs.pop(session_id, None)
+
+    def try_detect_version(self, session_id: str, data: str) -> bool:
+        """Try to detect Claude version/model from output. Returns True if newly detected."""
+        info = self._sessions.get(session_id)
+        if not info or info.claude_version:
+            return False  # already detected or no session
+        buf = self._detect_bufs.get(session_id, "")
+        if len(buf) >= _MAX_DETECT_CHARS:
+            return False  # give up after threshold
+        buf += data
+        self._detect_bufs[session_id] = buf
+        plain = _to_plain(buf)
+        version, model = _extract_version_model(plain)
+        if version and model:
+            info.claude_version = version
+            info.claude_model = model
+            self._detect_bufs.pop(session_id, None)  # free buffer
+            return True
+        return False
 
     async def rename(self, session_id: str, name: str) -> Optional[SessionInfo]:
         async with self._lock:
@@ -464,6 +533,15 @@ async def receive_output(session_id: str, body: dict):
         info.output_buffer = info.output_buffer[-MAX_BUFFER_CHUNKS:]
     await hub.broadcast({"type": "output", "session_id": session_id, "data": data})
 
+    # Detect Claude version/model from early output and broadcast once
+    if registry.try_detect_version(session_id, data):
+        await hub.broadcast({
+            "type": "session_info",
+            "session_id": session_id,
+            "version": info.claude_version,
+            "model": info.claude_model,
+        })
+
     detector = registry.get_detector(session_id, _cfg)
     event = detector.detect(data)
 
@@ -660,6 +738,8 @@ async def websocket_endpoint(ws: WebSocket):
             "status": s.status,
             "terminal_cols": s.terminal_cols,
             "terminal_rows": s.terminal_rows,
+            "claude_version": s.claude_version,
+            "claude_model": s.claude_model,
         }
         for s in sessions_list
     ]

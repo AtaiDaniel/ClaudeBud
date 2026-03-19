@@ -148,8 +148,6 @@ def run_claude(passthrough_args: list, session_name: str = None) -> None:
     session = Session(
         session_id, port, passthrough_args,
         terminal_title=session_name,
-        local_url=local_url,
-        tailscale_url=tailscale_url,
     )
 
     # Print a clean banner before Claude's pty takes over.
@@ -203,9 +201,17 @@ def _get_tailscale_ip() -> str:
 
 def _get_tailscale_fqdn() -> str:
     """Return the machine's Tailscale DNS name (e.g. 'box.tail-xxxx.ts.net') or ''."""
+    import shutil as _shutil
+    bin_ = _shutil.which("tailscale") or ""
+    if not bin_ and sys.platform == "win32":
+        candidate = Path(r"C:\Program Files\Tailscale\tailscale.exe")
+        if candidate.exists():
+            bin_ = str(candidate)
+    if not bin_:
+        return ""
     try:
         result = subprocess.run(
-            ["tailscale", "status", "--json"],
+            [bin_, "status", "--json"],
             capture_output=True, text=True, timeout=5,
         )
         if result.returncode == 0:
@@ -241,9 +247,9 @@ def _print_launch_banner(local_url: str, tailscale_url: str) -> None:
 def _print_access_urls(port: int) -> None:
     local_ip = _get_local_ip()
     tailscale_fqdn = _get_tailscale_fqdn()
-    print(f"  Local:    https://{local_ip}:{port}  (self-signed cert)")
+    print(f"  Local:     http://{local_ip}:{port}")
     if tailscale_fqdn:
-        print(f"  Tailscale: https://{tailscale_fqdn}:{port}  (trusted cert)")
+        print(f"  Tailscale: https://{tailscale_fqdn}:{port}")
 
 
 def _setup_autostart_macos(port: int) -> None:
@@ -378,40 +384,33 @@ def run_setup() -> None:
         else:
             print(f"  Unsupported platform for autostart: {platform}")
 
-    # 3. HTTPS info
+    # 3. Detect Tailscale + show URLs
     print()
-    print("HTTPS")
-    print("-" * 40)
-    tailscale_fqdn = _get_tailscale_fqdn()
-    if tailscale_fqdn:
-        print(f"Tailscale detected: {tailscale_fqdn}")
-        print("ClaudeBud will obtain a browser-trusted Let's Encrypt certificate")
-        print("automatically via 'tailscale cert' on first start.")
-        print()
-        print("If HTTPS is not yet enabled on your tailnet, enable it at:")
-        print("  https://login.tailscale.com/admin/dns  (toggle 'Enable HTTPS')")
-    else:
-        print("Tailscale not detected.")
-        print("ClaudeBud will use a self-signed certificate for local network access.")
-        print(f"  Cert: ~/.claudebud/cert.pem  (auto-generated on first start)")
-        print()
-        print("To use push notifications on Android:")
-        print("  1. Copy ~/.claudebud/cert.pem to your phone")
-        print("  2. Settings → Security → Install CA Certificate → select the file")
-        print()
-        print("For automatic trusted HTTPS, install Tailscale:")
-        print("  https://tailscale.com")
-
-    # 4. Print URL
     ip = _get_local_ip()
     port = cfg["port"]
-    print()
-    print("Open this URL on your phone:")
+    tailscale_fqdn = _get_tailscale_fqdn()
+
     if tailscale_fqdn:
-        print(f"  https://{tailscale_fqdn}:{port}  (Tailscale — trusted cert)")
-        print(f"  https://{ip}:{port}  (local network — self-signed cert)")
+        print("Tailscale detected")
+        print(f"  Machine: {tailscale_fqdn}")
+        print()
+        print("Open this URL on your phone (Tailscale — works anywhere):")
+        print(f"  https://{tailscale_fqdn}:{port}")
+        print()
+        print("  Note: requires HTTPS Certificates enabled on your tailnet.")
+        print("  If push notifications don't work, enable it at:")
+        print("    https://login.tailscale.com/admin/dns  →  Enable HTTPS")
+        print()
+        print("Local network (same Wi-Fi only):")
+        print(f"  http://{ip}:{port}")
     else:
-        print(f"  https://{ip}:{port}  (accept cert warning on first visit)")
+        print("Tailscale not detected.")
+        print("  Install Tailscale for remote access + automatic HTTPS:")
+        print("  https://tailscale.com")
+        print()
+        print("Open this URL on your phone (local Wi-Fi only):")
+        print(f"  http://{ip}:{port}")
+
     print()
     print("Setup complete.")
 

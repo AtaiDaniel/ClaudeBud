@@ -61,12 +61,9 @@ def _detect_daemon_base_url(port: int) -> str:
     return f"http://127.0.0.1:{port}"  # best-effort fallback
 
 
-# ── Banner rewriter ────────────────────────────────────────────────────────────
+# ── Phone output helpers ───────────────────────────────────────────────────────
 
 # Strips ANSI/VT escape sequences from bytes so we can read plain text.
-# Handles both BEL-terminated and ST-terminated (ESC \) OSC sequences, plus
-# standalone ST — the latter matters on Windows where Claude Code may emit
-# ESC \ as a string terminator, which otherwise passes through as a stray '\'.
 _ANSI_STRIP = re.compile(
     rb"\x1b(?:"
     rb"\[[0-9;?]*[a-zA-Z]"              # CSI:  ESC [ … letter
@@ -78,12 +75,6 @@ _ANSI_STRIP = re.compile(
     rb")"
 )
 
-# Matches cursor-right sequences \x1b[NC — we convert these to spaces
-_CURSOR_RIGHT = re.compile(rb"\x1b\[(\d*)C")
-
-# Version number in raw bytes — appears contiguously even amid escape codes
-_VERSION_RE = re.compile(rb"v\d+\.\d+")
-
 # Standalone ESC+\ (String Terminator) emitted by Claude Code on Windows as a
 # sequence terminator.  xterm.js on the phone may not consume it silently and
 # can display it as a stray '\' character.
@@ -93,137 +84,6 @@ _STANDALONE_ST_RE = re.compile(rb"\x1b\\")
 _SHORT_RULE = ("\x1b[2m" + "─" * 28 + "\x1b[0m").encode()
 _RULE_CHARS  = frozenset("─━═╌╍-")
 
-# Block characters used by Claude's logo — stripped when extracting info text
-_LOGO_CHARS = frozenset("▐▛█▜▌▝▘▙▚▟▞▗▖▄▀▒░▓")
-
-
-def _to_plain(raw: bytes) -> str:
-    """Convert raw terminal bytes to approximate plain text.
-    Cursor-right sequences are replaced with equivalent spaces so that
-    words spaced via \x1b[1C render correctly (e.g. 'Claude Code v2.1.78')."""
-    def _cr_to_spaces(m: re.Match) -> bytes:
-        n = int(m.group(1)) if m.group(1) else 1
-        return b" " * n
-    text = _CURSOR_RIGHT.sub(_cr_to_spaces, raw)
-    text = _ANSI_STRIP.sub(b"", text)
-    return text.decode("utf-8", errors="replace")
-
-# Claude logo reconstructed with original orange colour
-_OR   = "\x1b[38;2;215;119;87m"   # orange — matches Claude's logo
-_CB   = "\x1b[38;2;0;210;160m"    # teal/mint — ClaudeBud accent
-_RST  = "\x1b[0m"
-_DIM  = "\x1b[2m"
-
-_LOGO = [
-    f" {_OR}▐▛███▜▌{_RST}",
-    f"{_OR}▝▜█████▛▘{_RST}",
-    f"  {_OR}▘▘ ▝▝{_RST}  ",
-]
-
-# Buddy — appears on logo lines 1 and 2, right of the logo.
-# Both rows are padded to the same visible width (8 chars) so the
-# info column stays aligned across all three banner lines.
-_BUDDY = [
-    "       ",              # line 0: 7-space placeholder
-    f"{_OR}▐▛█▛█{_RST}  ",  # line 1: 5 chars + 2 trail = 7 visible
-    f"{_OR}▜████▘{_RST} ",  # line 2: 6 chars + 1 trail = 7 visible
-]
-
-
-class _BannerOverwriter:
-    """Passes all pty output through to PC unchanged, but once the Claude
-    startup banner is detected it appends a 3-row ClaudeBud overlay for the
-    phone's xterm.js display.  The overlay is re-injected after every
-    screen-clear so it survives Claude's TUI redraws.
-
-    PC users see the ClaudeBud banner printed by cli.py *before* the pty
-    starts — no cursor magic, no stream injection needed on the PC path.
-    """
-
-    _MAX_SEEN = 8_000   # stop tracking after this many bytes
-
-    def __init__(self, local_url: str = "", tailscale_url: str = "") -> None:
-        self._seen: bytes = b""
-        self._done: bool  = False
-        self._local_url = local_url
-        self._tailscale_url = tailscale_url
-        # Stored after first trigger; used to re-inject after screen clears.
-        self._overwrite: bytes = b""
-
-    def reinject_after_clear(self, data: bytes) -> bytes:
-        """If data contains a screen-clear and we have a phone banner ready,
-        append the banner overwrite at the end so it lands on top of Claude's
-        redrawn UI."""
-        if not self._overwrite:
-            return data
-        if b"\x1b[2J" in data:
-            return data + self._overwrite
-        return data
-
-    def feed(self, data: bytes):
-        """Always returns (pc_data, phone_data) immediately.
-        PC data is passed through unmodified.
-        On the trigger chunk, phone_data has the 3-row overlay appended."""
-        if self._done:
-            return data, data
-
-        self._seen += data
-        if len(self._seen) > self._MAX_SEEN:
-            self._done = True
-            return data, data
-
-        # Quick check: version number must be present in raw bytes
-        if not _VERSION_RE.search(self._seen):
-            return data, data
-
-        # Render cursor-right sequences as spaces so word gaps are preserved
-        plain = _to_plain(self._seen)
-
-        # Extract 2 non-empty info lines: version and model
-        info: list = []
-        for line in plain.splitlines():
-            text = "".join(c for c in line if c not in _LOGO_CHARS).strip()
-            if text:
-                info.append(text)
-            if len(info) == 2:
-                break
-
-        if len(info) < 2:
-            return data, data  # keep watching
-
-        self._done = True
-        phone_extra = self._build_phone_overwrite(info[0], info[1])
-        self._overwrite = phone_extra.encode("utf-8")
-        return (
-            data,                              # PC: unmodified passthrough
-            data + self._overwrite,            # phone: with 3-row overlay
-        )
-
-    def _build_phone_overwrite(self, version: str, model: str) -> str:
-        """3-row overlay for the phone's xterm.js.
-
-        Overwrites only the 3 existing Claude banner rows using absolute
-        cursor positioning — no insert-lines, no DEC save/restore.
-        Row 3 shows ClaudeBud version and the access URL(s).
-        """
-        from . import __version__ as _cbv
-        url_part = f"{_CB}{self._local_url}{_RST}"
-        if self._tailscale_url:
-            url_part += f"  {_DIM}·{_RST}  {_CB}{self._tailscale_url}{_RST}"
-        row3 = (
-            f"\x1b[2K{_LOGO[2]}{_BUDDY[2]}"
-            f"{_CB}+ ClaudeBud v{_cbv}{_RST}  {_DIM}{url_part}"
-        )
-        rows = [
-            f"\x1b[2K{_LOGO[0]}{_BUDDY[0]}{version}",
-            f"\x1b[2K{_LOGO[1]}{_BUDDY[1]}{model}",
-            row3,
-        ]
-        return (
-            "\x1b[1;1H"        # jump to row 1 (no save/restore — breaks xterm.js)
-            + "\r\n".join(rows)
-        )
-
 
 class Session:
     def __init__(
@@ -232,8 +92,6 @@ class Session:
         daemon_port: int,
         args: List[str],
         terminal_title: Optional[str] = None,
-        local_url: str = "",
-        tailscale_url: str = "",
     ):
         self.session_id = session_id
         self.daemon_port = daemon_port
@@ -248,7 +106,6 @@ class Session:
         self._running = False
         self._base_url = _detect_daemon_base_url(daemon_port)
         self._http = httpx.Client(timeout=5.0, verify=False)
-        self._banner = _BannerOverwriter(local_url=local_url, tailscale_url=tailscale_url)
 
     def run(self) -> int:
         """Spawn claude in a pty, proxy I/O, return its exit code."""
@@ -333,11 +190,9 @@ class Session:
             if not data:
                 break
 
-            pc_data, phone_data = self._banner.feed(data)
-            pc_data = self._rewrite_title(pc_data)
-            phone_data = self._rewrite_title(phone_data)
-            os.write(stdout_fd, pc_data)
-            self._post_output(phone_data)
+            data = self._rewrite_title(data)
+            os.write(stdout_fd, data)
+            self._post_output(data)
 
         self._running = False
 
@@ -443,19 +298,16 @@ class Session:
                 time.sleep(0.01)
                 continue
 
-            # pywinpty returns str; encode for banner/title rewriting and daemon POST
+            # pywinpty returns str; encode for title rewriting and daemon POST
             if isinstance(data, str):
                 raw = data.encode("utf-8", errors="replace")
             else:
                 raw = data
 
-            pc_raw, phone_raw = self._banner.feed(raw)
-            pc_raw    = self._rewrite_title(pc_raw)
-            phone_raw = self._rewrite_title(phone_raw)
-
-            sys.stdout.write(pc_raw.decode("utf-8", errors="replace"))
+            raw = self._rewrite_title(raw)
+            sys.stdout.write(raw.decode("utf-8", errors="replace"))
             sys.stdout.flush()
-            self._post_output(phone_raw)
+            self._post_output(raw)
 
         self._running = False
 
@@ -550,12 +402,6 @@ class Session:
             # Windows as a sequence terminator.  xterm.js on the phone may render it
             # as a stray '\' in the terminal / entry box.
             phone_data = _STANDALONE_ST_RE.sub(b"", data)
-
-            # Re-inject the ClaudeBud banner after any screen-clear Claude sends.
-            # Claude's TUI redraws the full screen on startup (and sometimes later),
-            # which erases the banner we wrote in feed().  By appending the overwrite
-            # at the END of the same chunk we ensure it lands on top of Claude's redraw.
-            phone_data = self._banner.reinject_after_clear(phone_data)
 
             # Shorten long horizontal-rule lines for the phone display.
             # We process line-by-line, strip ANSI codes first (so interspersed colour

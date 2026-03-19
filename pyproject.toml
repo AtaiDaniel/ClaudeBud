@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claudebud"
-version = "0.1.6"
+version = "0.1.7"
 description = "Web control and push notifications for Claude Code terminals"
 readme = "README.md"
 requires-python = ">=3.8"

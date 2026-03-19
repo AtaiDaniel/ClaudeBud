@@ -128,6 +128,25 @@
       50%       { opacity: 0.3; }
     }
 
+    /* ── Info banner ── */
+    #info-banner {
+      flex-shrink: 0;
+      background: var(--tab-bg);
+      border-bottom: 1px solid var(--tab-border);
+      font-family: monospace;
+      font-size: 11px;
+      color: #888;
+      padding: 4px 12px;
+      display: none;  /* hidden until info arrives */
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #info-banner .ver  { color: #d77757; }
+    #info-banner .mdl  { color: #aaa; }
+    #info-banner .cb   { color: #00d2a0; }
+    #info-banner .sep  { color: #555; margin: 0 6px; }
+
     /* ── Terminal area ── */
     #terminal-wrap {
       flex: 1;
@@ -407,6 +426,7 @@
     <button id="btn-kbd-config"  class="topbar-btn" title="Configure buttons">&#9881;</button>
   </div>
   <div id="tabbar"></div>
+  <div id="info-banner"></div>
   <div id="terminal-wrap">
     <div id="no-sessions">
       <div>No active sessions</div>
@@ -539,6 +559,7 @@
       case 'output':            appendOutput(msg.session_id, msg.data);  break;
       case 'session_history':   appendOutput(msg.session_id, msg.data);  break;
       case 'terminal_resize':   applyTerminalSize(msg.session_id, msg.cols, msg.rows); break;
+      case 'session_info':      setSessionInfo(msg.session_id, msg.version, msg.model); break;
     }
   }
 
@@ -610,12 +631,15 @@
     const serverRows = info.terminal_rows || 0;
     sessions[info.session_id] = { name: info.name, number: info.number,
       status: info.status || 'running', term, fitAddon, container, tab, dot, label,
-      serverCols, serverRows };
+      serverCols, serverRows,
+      claudeVersion: info.claude_version || '',
+      claudeModel: info.claude_model || '' };
 
     setStatus(info.session_id, info.status || 'running');
     noSessions.style.display = 'none';
 
     if (!activeId) activateSession(info.session_id);
+    else if (info.session_id === activeId) updateInfoBanner();
   }
 
   function removeSession(sid) {
@@ -630,7 +654,7 @@
       activeId = null;
       const ids = Object.keys(sessions);
       if (ids.length) activateSession(ids[ids.length - 1]);
-      else noSessions.style.display = '';
+      else { noSessions.style.display = ''; updateInfoBanner(); }
     }
   }
 
@@ -647,6 +671,7 @@
     if (!s) return;
     s.tab.classList.add('active');
     s.container.classList.add('active');
+    updateInfoBanner();
     requestAnimationFrame(() => safeFit(sid));
   }
 
@@ -662,6 +687,38 @@
     if (!s) return;
     s.status = status;
     s.dot.className = 'tab-status ' + status;
+  }
+
+  // ── Info banner (HTML, outside xterm.js) ──────────────────────────────────
+  const infoBanner = document.getElementById('info-banner');
+
+  function setSessionInfo(sid, version, model) {
+    const s = sessions[sid];
+    if (!s) return;
+    s.claudeVersion = version || '';
+    s.claudeModel = model || '';
+    if (sid === activeId) updateInfoBanner();
+  }
+
+  function updateInfoBanner() {
+    const s = activeId ? sessions[activeId] : null;
+    if (!s || !s.claudeVersion) {
+      infoBanner.style.display = 'none';
+      return;
+    }
+    infoBanner.style.display = '';
+    infoBanner.innerHTML =
+      '<span class="ver">' + esc(s.claudeVersion) + '</span>' +
+      '<span class="sep">&middot;</span>' +
+      '<span class="mdl">' + esc(s.claudeModel) + '</span>' +
+      '<span class="sep">&middot;</span>' +
+      '<span class="cb">ClaudeBud</span>';
+  }
+
+  function esc(str) {
+    const d = document.createElement('div');
+    d.textContent = str;
+    return d.innerHTML;
   }
 
   // ── Output ─────────────────────────────────────────────────────────────────
