@@ -790,11 +790,11 @@
 
   function renderKbdBar() {
     kbdbar.innerHTML = '';
-    const row = document.createElement('div');
-    row.className = 'kbd-row';
 
     if (kbdMode === 'normal') {
-      // Simple text input — tapping it opens the phone's system keyboard
+      // Text input row — tapping it opens the phone's system keyboard
+      const row = document.createElement('div');
+      row.className = 'kbd-row';
       const input = document.createElement('input');
       input.type = 'text';
       input.className = 'normal-kbd-input';
@@ -814,10 +814,10 @@
       row.appendChild(makeKbdToggleBtn());
       kbdbar.appendChild(row);
       requestAnimationFrame(() => input.focus());
-      return;
+      // fall through to also render the button grid below
     }
 
-    // Button grid (pc mode — shows alongside the virtual keyboard)
+    // Button grid — always shown in both modes
     const { rows, cols, slots } = kbdConfig;
     const lastSlot = rows * cols - 1;
     for (let r = 0; r < rows; r++) {
@@ -825,8 +825,18 @@
       r2.className = 'kbd-row';
       for (let c = 0; c < cols; c++) {
         const idx = r * cols + c;
-        if (idx === lastSlot) {
+        if (idx === lastSlot && kbdMode === 'pc') {
           r2.appendChild(makeKbdToggleBtn());
+        } else if (idx === lastSlot) {
+          // In normal mode the toggle is already in the text input row — skip this slot
+          const def = BTN_MAP[slots[idx]] || BTN_MAP['empty'];
+          const btn = document.createElement('button');
+          btn.className = 'kbd-btn';
+          btn.title = def.title;
+          btn.textContent = def.label;
+          if (def.data !== null) btn.addEventListener('click', () => sendInput(def.data));
+          else { btn.disabled = true; btn.style.opacity = '0.15'; }
+          r2.appendChild(btn);
         } else {
           const def = BTN_MAP[slots[idx]] || BTN_MAP['empty'];
           const btn = document.createElement('button');
