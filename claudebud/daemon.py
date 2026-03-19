@@ -239,15 +239,32 @@ def _to_plain(raw: str) -> str:
     return _ANSI_STRIP.sub("", _CURSOR_RIGHT.sub(_cr, raw))
 
 
+_VERSION_LINE_RE = _re.compile(r"Claude Code v[\d.]+")
+_MODEL_LINE_RE = _re.compile(
+    r"(?:Opus|Sonnet|Haiku|claude)[\s\d.]+"
+    r"(?:\([^)]*\))?"           # optional "(1M context)"
+    r"(?:\s*[·]\s*\S.*)?"       # optional " · Claude Max"
+)
+
+
 def _extract_version_model(plain: str):
     """Return (version, model) from Claude's banner text, or (None, None)."""
-    info = []
+    version = None
+    model = None
     for line in plain.splitlines():
         text = "".join(c for c in line if c not in _LOGO_CHARS).strip()
-        if text:
-            info.append(text)
-        if len(info) == 2:
-            return info[0], info[1]
+        if not text:
+            continue
+        if not version:
+            m = _VERSION_LINE_RE.search(text)
+            if m:
+                version = m.group(0)
+                continue
+        if version and not model:
+            m = _MODEL_LINE_RE.search(text)
+            if m:
+                model = m.group(0).strip()
+                return version, model
     return None, None
 
 
@@ -444,7 +461,10 @@ app = FastAPI(lifespan=lifespan)
 @app.get("/")
 async def serve_index():
     index = get_static_dir() / "index.html"
-    return FileResponse(str(index), media_type="text/html")
+    return FileResponse(
+        str(index), media_type="text/html",
+        headers={"Cache-Control": "no-cache, no-store"},
+    )
 
 
 @app.get("/manifest.json")
@@ -533,15 +553,6 @@ async def receive_output(session_id: str, body: dict):
         info.output_buffer = info.output_buffer[-MAX_BUFFER_CHUNKS:]
     await hub.broadcast({"type": "output", "session_id": session_id, "data": data})
 
-    # Detect Claude version/model from early output and broadcast once
-    if registry.try_detect_version(session_id, data):
-        await hub.broadcast({
-            "type": "session_info",
-            "session_id": session_id,
-            "version": info.claude_version,
-            "model": info.claude_model,
-        })
-
     detector = registry.get_detector(session_id, _cfg)
     event = detector.detect(data)
 
@@ -576,6 +587,26 @@ async def receive_output(session_id: str, body: dict):
         })
         await _push("✅ Claude finished", info.name)
 
+    return {"ok": True}
+
+
+@app.post("/sessions/{session_id}/info")
+async def session_info(session_id: str, body: dict):
+    """Called by session.py when Claude version/model is detected."""
+    info = registry.get(session_id)
+    if not info:
+        raise HTTPException(status_code=404, detail="session not found")
+    info.claude_version = body.get("version", "")
+    info.claude_model = body.get("model", "")
+    logger.info("Detected Claude: %s / %s", info.claude_version, info.claude_model)
+    from . import __version__ as _cbv
+    await hub.broadcast({
+        "type": "session_info",
+        "session_id": session_id,
+        "version": info.claude_version,
+        "model": info.claude_model,
+        "cb_version": _cbv,
+    })
     return {"ok": True}
 
 
@@ -744,10 +775,17 @@ async def websocket_endpoint(ws: WebSocket):
         for s in sessions_list
     ]
     await ws.send_text(json.dumps({"type": "sessions_snapshot", "sessions": snapshot}))
-    # Replay buffered output for each session so the client sees existing history
+    # Replay buffered output for each session so the client sees existing history.
+    # Prefix with a full screen clear so xterm.js starts blank — without this,
+    # replaying multiple TUI redraw cycles causes duplicate / overlapping content.
+    # Only replay the last 80 chunks to avoid sending stale cursor-positioning state
+    # from old response cycles that would confuse xterm.js layout.
+    HISTORY_REPLAY_CHUNKS = 150
+    CLEAR_HOME = "\x1b[2J\x1b[H"
     for s in sessions_list:
         if s.output_buffer:
-            history = "".join(s.output_buffer)
+            recent = s.output_buffer[-HISTORY_REPLAY_CHUNKS:]
+            history = CLEAR_HOME + "".join(recent)
             await ws.send_text(json.dumps({
                 "type": "session_history",
                 "session_id": s.session_id,

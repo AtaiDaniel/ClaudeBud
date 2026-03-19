@@ -80,9 +80,54 @@ _ANSI_STRIP = re.compile(
 # can display it as a stray '\' character.
 _STANDALONE_ST_RE = re.compile(rb"\x1b\\")
 
+# Strip cursor-movement and screen/line-control sequences from the phone stream.
+# We strip sequences that use ABSOLUTE positions (wrong column/row on a different-width
+# phone terminal) or move cursor to wrong relative positions.  SGR (\x1b[...m) is NOT
+# matched so colors and bold pass through intact.
+# We deliberately KEEP relative-erase sequences (K, J, P, X) so that backspace and
+# line-rewrite operations display correctly in xterm.js on the phone.
+#   Strip: A/B (cursor up/down), D (cursor left), E/F (next/prev line), G (set column),
+#          f (cursor position alias), L/M (insert/delete line), S/T (scroll), Z (back-tab),
+#          d (set row), u (restore), @ (insert char), s (save cursor), ?...h/l (private)
+#   Keep:  J (erase screen), K (erase line), P (delete char), X (erase char) — relative ops
+#   H handled separately: converted to \r (col 0) to preserve left-margin alignment
+_TUI_STRIP = re.compile(
+    rb"\x1b\[(?:[0-9;]*[ABDEFGLMSTZdefu@s]|[?][0-9;]+[hl])"
+    rb"|\x1b[78]"
+)
+# Convert cursor-position H to CR — any \x1b[row;colH becomes \r (col 0, ignore row).
+# This keeps text left-aligned after \x1b[2J\x1b[H style screen clears.
+_CURSOR_POS_H_RE = re.compile(rb"\x1b\[[0-9;]*H")
+
 # Horizontal-rule shortening: replacement and char set used in _post_output.
 _SHORT_RULE = ("\x1b[2m" + "─" * 28 + "\x1b[0m").encode()
 _RULE_CHARS  = frozenset("─━═╌╍-")
+
+# Block characters used by Claude's startup logo — lines containing these
+# are stripped from early phone output (the HTML banner replaces them).
+_LOGO_CHARS = frozenset("▐▛█▜▌▝▘▙▚▟▞▗▖▄▀▒░▓")
+_BANNER_STRIP_LIMIT = 4_000  # stop stripping after this many bytes
+
+# Version detection (runs in session.py so detection sees raw unstripped data)
+_CURSOR_RIGHT = re.compile(rb"\x1b\[(\d*)C")
+
+def _cursor_right_to_spaces(m: re.Match) -> bytes:
+    n = int(m.group(1)) if m.group(1) else 1
+    return b" " * n
+
+def _to_plain(raw: bytes) -> str:
+    def _cr(m: re.Match) -> bytes:
+        return b" " * (int(m.group(1)) if m.group(1) else 1)
+    text = _CURSOR_RIGHT.sub(_cr, raw)
+    text = _ANSI_STRIP.sub(b"", text)
+    return text.decode("utf-8", errors="replace")
+
+_VERSION_LINE_RE = re.compile(r"Claude Code v[\d.]+")
+_MODEL_LINE_RE = re.compile(
+    r"(?:Opus|Sonnet|Haiku|claude)[\s\d.]+"
+    r"(?:\([^)]*\))?"
+    r"(?:\s*[·]\s*\S.*)?"
+)
 
 
 class Session:
@@ -106,6 +151,9 @@ class Session:
         self._running = False
         self._base_url = _detect_daemon_base_url(daemon_port)
         self._http = httpx.Client(timeout=5.0, verify=False)
+        self._phone_bytes_seen = 0     # for banner stripping
+        self._detect_buf = b""         # raw bytes buffer for version detection
+        self._version_detected = False
 
     def run(self) -> int:
         """Spawn claude in a pty, proxy I/O, return its exit code."""
@@ -396,25 +444,85 @@ class Session:
         except Exception:
             pass
 
+    def _try_detect_version(self, data: bytes) -> None:
+        """Detect Claude version/model from raw output and post to daemon."""
+        if self._version_detected:
+            return
+        self._detect_buf += data
+        if len(self._detect_buf) > _BANNER_STRIP_LIMIT:
+            self._version_detected = True
+            self._detect_buf = b""
+            return
+        plain = _to_plain(self._detect_buf)
+        version = None
+        model = None
+        for line in plain.splitlines():
+            text = "".join(c for c in line if c not in _LOGO_CHARS).strip()
+            if not text:
+                continue
+            if not version:
+                m = _VERSION_LINE_RE.search(text)
+                if m:
+                    version = m.group(0)
+                    continue
+            if version and not model:
+                m = _MODEL_LINE_RE.search(text)
+                if m:
+                    model = m.group(0).strip()
+                    break
+        if version and model:
+            self._version_detected = True
+            self._detect_buf = b""
+            try:
+                self._http.post(
+                    f"{self._base_url}/sessions/{self.session_id}/info",
+                    json={"version": version, "model": model},
+                    timeout=2.0,
+                )
+            except Exception:
+                pass
+
     def _post_output(self, data: bytes) -> None:
         try:
-            # Strip standalone ESC+\ (String Terminator) — emitted by Claude Code on
-            # Windows as a sequence terminator.  xterm.js on the phone may render it
-            # as a stray '\' in the terminal / entry box.
-            phone_data = _STANDALONE_ST_RE.sub(b"", data)
+            # Detect version/model from RAW data before any stripping
+            self._try_detect_version(data)
 
-            # Shorten long horizontal-rule lines for the phone display.
-            # We process line-by-line, strip ANSI codes first (so interspersed colour
-            # codes don't break detection), then check whether the visible content is
-            # ≥70% rule characters.  Matching lines are replaced with a short dimmed
-            # rule (─ × 28) that fits a phone screen without wrapping.
+            # Replace ESC+\ (String Terminator) with BEL (\x07) — the alternative ST.
+            # Deleting ST leaves xterm.js stuck in OSC-parse mode when the OSC started
+            # in a previous chunk, causing subsequent text (like '>') to be swallowed.
+            # BEL properly terminates the pending OSC without producing a visible char.
+            phone_data = _STANDALONE_ST_RE.sub(b"\x07", data)
+            # Convert cursor-right (\x1b[nC) to n spaces before stripping other TUI
+            # sequences. Claude Code uses cursor-right for word-spacing in its output —
+            # stripping it without substitution removes all spaces from responses.
+            phone_data = _CURSOR_RIGHT.sub(_cursor_right_to_spaces, phone_data)
+            # Convert cursor-position H (\x1b[n;mH) to CR so text always starts at col 0.
+            # Without this, \x1b[2J\x1b[H style full-screen redraws leave the cursor at a
+            # wrong column after stripping H, causing misaligned content on the phone.
+            phone_data = _CURSOR_POS_H_RE.sub(b"\r", phone_data)
+            phone_data = _TUI_STRIP.sub(b"", phone_data)
+
+            # During early output, strip lines containing Claude's logo block chars.
+            # The HTML info banner in the PWA replaces the raw terminal banner.
+            self._phone_bytes_seen += len(data)
+            strip_logo = self._phone_bytes_seen < _BANNER_STRIP_LIMIT
+
+            # Process line-by-line for rule shortening and optional logo stripping.
             filtered: list = []
             for line in phone_data.split(b"\n"):
                 plain = _ANSI_STRIP.sub(b"", line).decode("utf-8", errors="replace").strip()
+
+                # Strip banner lines with logo block chars (early output only)
+                if strip_logo and any(c in _LOGO_CHARS for c in plain):
+                    continue
+
                 if len(plain) >= 20:
                     rule_count = sum(1 for c in plain if c in _RULE_CHARS)
                     if rule_count / len(plain) > 0.70:
-                        line = _SHORT_RULE
+                        # Preserve \r if original line had it (split on \n leaves \r at end).
+                        # Without \r, the next line after the separator starts at wrong column.
+                        cr = b"\r" if line.endswith(b"\r") else b""
+                        line = _SHORT_RULE + cr
                 filtered.append(line)
             phone_data = b"\n".join(filtered)
 

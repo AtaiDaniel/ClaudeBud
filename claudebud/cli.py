@@ -231,16 +231,15 @@ def _print_launch_banner(local_url: str, tailscale_url: str) -> None:
     scrollback once Claude's TUI takes over the screen.
     """
     from . import __version__ as _cbv
+    OR  = "\x1b[38;2;215;119;87m"  # orange — Claude's logo colour
+    CB  = "\x1b[38;2;0;210;160m"   # teal/mint — ClaudeBud accent
     DIM = "\x1b[2m"
-    CB  = "\x1b[38;2;0;210;160m"  # teal/mint — ClaudeBud accent
     RST = "\x1b[0m"
-    rule = DIM + "─" * 48 + RST
-    print(rule)
-    print(f"  {CB}ClaudeBud v{_cbv}{RST}  {DIM}—  watch & control from your phone{RST}")
-    print(f"  {DIM}Local:   {RST} {CB}{local_url}{RST}")
+    # Buddy figure (3 rows, right-aligned next to info)
+    print(f"  {OR}▐▛█▛█{RST}   {CB}ClaudeBud v{_cbv}{RST}  {DIM}—  watch & control from your phone{RST}")
+    print(f"  {OR}▜████▘{RST}  {DIM}Local:   {RST} {CB}{local_url}{RST}")
     if tailscale_url:
-        print(f"  {DIM}External:{RST} {CB}{tailscale_url}{RST}  {DIM}(Tailscale){RST}")
-    print(rule)
+        print(f"           {DIM}External:{RST} {CB}{tailscale_url}{RST}  {DIM}(Tailscale){RST}")
     print(flush=True)
 
 

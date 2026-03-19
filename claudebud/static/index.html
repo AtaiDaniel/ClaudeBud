@@ -134,18 +134,22 @@
       background: var(--tab-bg);
       border-bottom: 1px solid var(--tab-border);
       font-family: monospace;
-      font-size: 11px;
-      color: #888;
-      padding: 4px 12px;
+      font-size: 13px;
+      line-height: 1.3;
+      padding: 6px 10px;
       display: none;  /* hidden until info arrives */
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
     }
-    #info-banner .ver  { color: #d77757; }
-    #info-banner .mdl  { color: #aaa; }
-    #info-banner .cb   { color: #00d2a0; }
-    #info-banner .sep  { color: #555; margin: 0 6px; }
+    #info-banner pre {
+      margin: 0;
+      font-family: inherit;
+      font-size: inherit;
+      line-height: inherit;
+    }
+    #info-banner .or  { color: #d77757; }  /* orange — Claude/Buddy */
+    #info-banner .ver { color: #d77757; }
+    #info-banner .mdl { color: #aaa; }
+    #info-banner .cb  { color: #00d2a0; }
+    #info-banner .dim { color: #666; }
 
     /* ── Terminal area ── */
     #terminal-wrap {
@@ -559,7 +563,7 @@
       case 'output':            appendOutput(msg.session_id, msg.data);  break;
       case 'session_history':   appendOutput(msg.session_id, msg.data);  break;
       case 'terminal_resize':   applyTerminalSize(msg.session_id, msg.cols, msg.rows); break;
-      case 'session_info':      setSessionInfo(msg.session_id, msg.version, msg.model); break;
+      case 'session_info':      setSessionInfo(msg.session_id, msg.version, msg.model, msg.cb_version); break;
     }
   }
 
@@ -633,7 +637,8 @@
       status: info.status || 'running', term, fitAddon, container, tab, dot, label,
       serverCols, serverRows,
       claudeVersion: info.claude_version || '',
-      claudeModel: info.claude_model || '' };
+      claudeModel: info.claude_model || '',
+      cbVersion: '' };
 
     setStatus(info.session_id, info.status || 'running');
     noSessions.style.display = 'none';
@@ -692,11 +697,12 @@
   // ── Info banner (HTML, outside xterm.js) ──────────────────────────────────
   const infoBanner = document.getElementById('info-banner');
 
-  function setSessionInfo(sid, version, model) {
+  function setSessionInfo(sid, version, model, cbVersion) {
     const s = sessions[sid];
     if (!s) return;
     s.claudeVersion = version || '';
     s.claudeModel = model || '';
+    if (cbVersion) s.cbVersion = cbVersion;
     if (sid === activeId) updateInfoBanner();
   }
 
@@ -706,13 +712,25 @@
       infoBanner.style.display = 'none';
       return;
     }
-    infoBanner.style.display = '';
+    infoBanner.style.display = 'block';
+    const v = esc(s.claudeVersion);
+    // Split model on · to separate model from subscription
+    const parts = s.claudeModel.split('·');
+    const modelName = esc(parts[0].trim());
+    const sub = parts.length > 1 ? esc(parts.slice(1).join('·').trim()) : '';
+    const cbv = s.cbVersion ? ' v' + esc(s.cbVersion) : '';
+    // Line 4: subscription (if any) + ClaudeBud version
+    let line4 = '                    <span class="cb">+ ClaudeBud' + cbv + '</span>';
+    if (sub) {
+      line4 = '                    <span class="dim">' + sub + '</span>  <span class="cb">+ ClaudeBud' + cbv + '</span>';
+    }
     infoBanner.innerHTML =
-      '<span class="ver">' + esc(s.claudeVersion) + '</span>' +
-      '<span class="sep">&middot;</span>' +
-      '<span class="mdl">' + esc(s.claudeModel) + '</span>' +
-      '<span class="sep">&middot;</span>' +
-      '<span class="cb">ClaudeBud</span>';
+      '<pre>' +
+      ' <span class="or">▐▛███▜▌</span>        <span class="ver">' + v + '</span>\n' +
+      '<span class="or">▝▜█████▛▘</span> <span class="or">▐▛█▛█</span>  <span class="mdl">' + modelName + '</span>\n' +
+      ' <span class="or"> ▘▘ ▝▝</span>   <span class="or">▜████▘</span> <span class="dim">' + esc(window.location.origin) + '</span>\n' +
+      line4 +
+      '</pre>';
   }
 
   function esc(str) {
