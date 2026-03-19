@@ -164,17 +164,16 @@ class _BannerOverwriter:
         # Normalise Windows path separators so backslashes don't appear in the
         # terminal output stream (avoids stray '\' characters on Windows).
         path = path.replace("\\", "/")
-        cb_line = f"         {_CB}+ ClaudeBud v{_cbv}{_RST}"
+        url_part = f"  {_DIM}·{_RST}  {_CB}{self._local_url}{_RST}"
+        if self._tailscale_url:
+            url_part += f"  {_DIM}/{_RST}  {_CB}{self._tailscale_url}{_RST}{_DIM} (ext){_RST}"
+        cb_line = f"         {_CB}+ ClaudeBud v{_cbv}{_RST}{url_part}"
         rows = [
             f"\x1b[2K{_LOGO[0]}{_BUDDY[0]}{version}",
             f"\x1b[2K{_LOGO[1]}{_BUDDY[1]}{model}",
             f"\x1b[2K{_LOGO[2]}{_BUDDY[2]}{_DIM}{path}{_RST}",
             f"\x1b[2K{cb_line}",
-            f"\x1b[2K",
-            f"\x1b[2K  {_DIM}Local:    {_RST}{_CB}{self._local_url}{_RST}",
         ]
-        if self._tailscale_url:
-            rows.append(f"\x1b[2K  {_DIM}External: {_RST}{_CB}{self._tailscale_url}{_RST}  {_DIM}(Tailscale){_RST}")
         return (
             "\x1b7"        # DEC save cursor
             "\x1b[1;1H"    # jump to row 1, col 1 (banner is always at top)
