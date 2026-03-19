@@ -84,7 +84,6 @@ def run_claude(passthrough_args: list, session_name: str = None) -> None:
     port = cfg["port"]
 
     ensure_daemon(port)
-    _print_access_urls(port)
 
     session_id = str(uuid.uuid4())
 
@@ -109,7 +108,16 @@ def run_claude(passthrough_args: list, session_name: str = None) -> None:
     # Pass terminal_title only when -n was given so session.py intercepts
     # and replaces any title escapes claude emits.  Without -n we pass None
     # so claude's own title sequences flow through unchanged.
-    session = Session(session_id, port, passthrough_args, terminal_title=session_name)
+    local_ip = _get_local_ip()
+    tailscale_ip = _get_tailscale_ip()
+    local_url = f"http://{local_ip}:{port}"
+    tailscale_url = f"http://{tailscale_ip}:{port}" if tailscale_ip else ""
+    session = Session(
+        session_id, port, passthrough_args,
+        terminal_title=session_name,
+        local_url=local_url,
+        tailscale_url=tailscale_url,
+    )
     exit_code = 0
     try:
         exit_code = session.run()

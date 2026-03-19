@@ -120,9 +120,11 @@ class _BannerOverwriter:
     _MARKER   = "Claude Code v"
     _MAX_SEEN = 8_000   # stop tracking after this many bytes
 
-    def __init__(self) -> None:
+    def __init__(self, local_url: str = "", tailscale_url: str = "") -> None:
         self._seen: bytes = b""
         self._done: bool  = False
+        self._local_url = local_url
+        self._tailscale_url = tailscale_url
 
     def feed(self, data: bytes) -> bytes:
         """Always returns data immediately; may append an overwrite payload."""
@@ -168,7 +170,11 @@ class _BannerOverwriter:
             f"\x1b[2K{_LOGO[1]}{_BUDDY[1]}{model}",
             f"\x1b[2K{_LOGO[2]}{_BUDDY[2]}{_DIM}{path}{_RST}",
             f"\x1b[2K{cb_line}",
+            f"\x1b[2K",
+            f"\x1b[2K  {_DIM}Local:    {_RST}{_CB}{self._local_url}{_RST}",
         ]
+        if self._tailscale_url:
+            rows.append(f"\x1b[2K  {_DIM}External: {_RST}{_CB}{self._tailscale_url}{_RST}  {_DIM}(Tailscale){_RST}")
         return (
             "\x1b7"        # DEC save cursor
             "\x1b[1;1H"    # jump to row 1, col 1 (banner is always at top)
@@ -184,6 +190,8 @@ class Session:
         daemon_port: int,
         args: List[str],
         terminal_title: Optional[str] = None,
+        local_url: str = "",
+        tailscale_url: str = "",
     ):
         self.session_id = session_id
         self.daemon_port = daemon_port
@@ -198,7 +206,7 @@ class Session:
         self._running = False
         self._base_url = f"http://127.0.0.1:{daemon_port}"
         self._http = httpx.Client(timeout=5.0)
-        self._banner = _BannerOverwriter()
+        self._banner = _BannerOverwriter(local_url=local_url, tailscale_url=tailscale_url)
 
     def run(self) -> int:
         """Spawn claude in a pty, proxy I/O, return its exit code."""
