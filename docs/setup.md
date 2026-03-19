@@ -18,11 +18,19 @@ Verify it works: `claude --version`
 
 ## 2. Install ClaudeBud
 
+ClaudeBud is available on [PyPI](https://pypi.org/project/claudebud/):
+
 ```bash
 pip install claudebud
 ```
 
 Verify: `claudebud --version`
+
+To upgrade to the latest version at any time:
+
+```bash
+pip install --upgrade claudebud
+```
 
 ---
 
@@ -33,28 +41,20 @@ claudebud setup
 ```
 
 The wizard will:
-- Ask for your ntfy topic name (see step 4)
 - Offer to configure autostart
 - Print the URL to open on your phone
 
 ---
 
-## 4. Set up push notifications (ntfy)
+## 4. Enable push notifications
 
-### On your phone
+ClaudeBud uses the browser's built-in **Web Push API** — no external app or account needed.
 
-Install the ntfy app:
-- **Android**: [Play Store](https://play.google.com/store/apps/details?id=io.heckel.ntfy)
-- **iOS**: [App Store](https://apps.apple.com/app/ntfy/id1625396347)
+1. Open the PWA on your phone (the URL printed by `claudebud setup`)
+2. Tap the **Enable Notifications** button in the top bar
+3. Accept the browser permission prompt
 
-Open the app → tap **+** → subscribe to a topic name.
-Choose something unique, e.g. `alice-claude-7x3k`. This is your private channel.
-
-### In the setup wizard
-
-When prompted for `ntfy topic name`, enter the same topic name you subscribed to.
-
-That's it. ClaudeBud will POST to `https://ntfy.sh/<your-topic>` whenever Claude needs attention.
+That's it. You'll receive a notification whenever Claude needs input or finishes a task.
 
 ---
 
@@ -133,8 +133,7 @@ No port forwarding or firewall changes needed.
 Make sure you've run `claudebud` (not `claude`) in a terminal after opening the web app.
 
 **Notifications aren't arriving**
-- Check the topic name in `~/.claudebud/config.json` matches the one in the ntfy app
-- Make sure the ntfy app has notification permissions on your phone
+- Open the PWA on your phone and make sure you tapped **Enable Notifications** and granted browser permission
 
 **The daemon didn't start**
 Run `claudebud` in a terminal — it starts the daemon automatically.
