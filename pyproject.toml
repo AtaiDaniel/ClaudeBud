@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claudebud"
-version = "0.1.3"
+version = "0.1.4"
 description = "Monitor and control Claude Code CLI sessions from your phone"
 readme = "README.md"
 requires-python = ">=3.8"

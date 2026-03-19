@@ -134,11 +134,25 @@ class _BannerOverwriter:
         self._done: bool  = False
         self._local_url = local_url
         self._tailscale_url = tailscale_url
+        # Stored after first trigger; used to re-inject after screen clears.
+        self._phone_overwrite: bytes = b""
+
+    def reinject_after_clear(self, data: bytes) -> bytes:
+        """If data contains a screen-clear and we have a phone banner ready,
+        append the banner overwrite at the end so it lands on top of Claude's
+        redrawn UI.  Claude's interactive shell clears the screen and redraws
+        its full TUI on startup (and sometimes later); without this the banner
+        disappears immediately after being written."""
+        if not self._phone_overwrite:
+            return data
+        if b"\x1b[2J" in data:
+            return data + self._phone_overwrite
+        return data
 
     def feed(self, data: bytes):
         """Always returns (pc_data, phone_data) immediately.
         On the trigger chunk, pc_data has the fancy cursor overwrite appended
-        and phone_data has a simple text append instead."""
+        and phone_data has the same overwrite via absolute positioning."""
         if self._done:
             return data, data
 
@@ -169,6 +183,7 @@ class _BannerOverwriter:
         self._done = True
         pc_extra    = self._build_pc_overwrite(info[0], info[1], info[2])
         phone_extra = self._build_phone_overwrite(info[0], info[1])
+        self._phone_overwrite = phone_extra.encode("utf-8")
         return (
             data + pc_extra.encode("utf-8"),
             data + phone_extra.encode("utf-8"),
@@ -559,6 +574,12 @@ class Session:
             # Windows as a sequence terminator.  xterm.js on the phone may render it
             # as a stray '\' in the terminal / entry box.
             phone_data = _STANDALONE_ST_RE.sub(b"", data)
+
+            # Re-inject the ClaudeBud banner after any screen-clear Claude sends.
+            # Claude's TUI redraws the full screen on startup (and sometimes later),
+            # which erases the banner we wrote in feed().  By appending the overwrite
+            # at the END of the same chunk we ensure it lands on top of Claude's redraw.
+            phone_data = self._banner.reinject_after_clear(phone_data)
 
             # Shorten long horizontal-rule lines for the phone display.
             # We process line-by-line, strip ANSI codes first (so interspersed colour
