@@ -68,11 +68,14 @@ _CURSOR_RIGHT = re.compile(rb"\x1b\[(\d*)C")
 # Version number in raw bytes — appears contiguously even amid escape codes
 _VERSION_RE = re.compile(rb"v\d+\.\d+")
 
-# Long horizontal rule sequences (─ ━ ═ - repeated 40+ times) → truncate for phone view.
-# Box-drawing chars encoded as UTF-8: ─ = e2 94 80, ━ = e2 94 81, ═ = e2 95 90.
-# We match runs of the UTF-8 byte e2 (first byte of all box-drawing chars) interleaved
-# with their continuation bytes, or plain ASCII hyphens.
-_HLINE_RE = re.compile(rb"(?:[\xe2][\x94\x95][\x80-\xbf]|-){40,}")
+# Standalone ESC+\ (String Terminator) emitted by Claude Code on Windows as a
+# sequence terminator.  xterm.js on the phone may not consume it silently and
+# can display it as a stray '\' character.
+_STANDALONE_ST_RE = re.compile(rb"\x1b\\")
+
+# Horizontal-rule shortening: replacement and char set used in _post_output.
+_SHORT_RULE = ("\x1b[2m" + "─" * 28 + "\x1b[0m").encode()
+_RULE_CHARS  = frozenset("─━═╌╍-")
 
 # Block characters used by Claude's logo — stripped when extracting info text
 _LOGO_CHARS = frozenset("▐▛█▜▌▝▘▙▚▟▞▗▖▄▀▒░▓")
@@ -512,9 +515,26 @@ class Session:
 
     def _post_output(self, data: bytes) -> None:
         try:
-            # Truncate long horizontal rule sequences for the phone view — a 220-char
-            # line on the PC terminal wraps across many lines on a narrow phone screen.
-            phone_data = _HLINE_RE.sub(b"\xe2\x94\x80" * 28, data)  # ─ × 28 ≈ phone width
+            # Strip standalone ESC+\ (String Terminator) — emitted by Claude Code on
+            # Windows as a sequence terminator.  xterm.js on the phone may render it
+            # as a stray '\' in the terminal / entry box.
+            phone_data = _STANDALONE_ST_RE.sub(b"", data)
+
+            # Shorten long horizontal-rule lines for the phone display.
+            # We process line-by-line, strip ANSI codes first (so interspersed colour
+            # codes don't break detection), then check whether the visible content is
+            # ≥70% rule characters.  Matching lines are replaced with a short dimmed
+            # rule (─ × 28) that fits a phone screen without wrapping.
+            filtered: list = []
+            for line in phone_data.split(b"\n"):
+                plain = _ANSI_STRIP.sub(b"", line).decode("utf-8", errors="replace").strip()
+                if len(plain) >= 20:
+                    rule_count = sum(1 for c in plain if c in _RULE_CHARS)
+                    if rule_count / len(plain) > 0.70:
+                        line = _SHORT_RULE
+                filtered.append(line)
+            phone_data = b"\n".join(filtered)
+
             self._http.post(
                 f"{self._base_url}/sessions/{self.session_id}/output",
                 json={"data": phone_data.decode("utf-8", errors="replace")},
