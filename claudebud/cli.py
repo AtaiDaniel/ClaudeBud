@@ -84,6 +84,7 @@ def run_claude(passthrough_args: list, session_name: str = None) -> None:
     port = cfg["port"]
 
     ensure_daemon(port)
+    _print_access_urls(port)
 
     session_id = str(uuid.uuid4())
 
@@ -136,6 +137,29 @@ def _get_local_ip() -> str:
         return ip
     except Exception:
         return "<your-machine-ip>"
+
+
+def _get_tailscale_ip() -> str:
+    """Return the Tailscale IPv4 address, or empty string if not available."""
+    try:
+        result = subprocess.run(
+            ["tailscale", "ip", "-4"],
+            capture_output=True, text=True, timeout=2,
+        )
+        ip = result.stdout.strip()
+        if ip and result.returncode == 0:
+            return ip
+    except Exception:
+        pass
+    return ""
+
+
+def _print_access_urls(port: int) -> None:
+    local_ip = _get_local_ip()
+    tailscale_ip = _get_tailscale_ip()
+    print(f"  Local:    http://{local_ip}:{port}")
+    if tailscale_ip:
+        print(f"  External: http://{tailscale_ip}:{port}  (Tailscale)")
 
 
 def _setup_autostart_macos(port: int) -> None:
