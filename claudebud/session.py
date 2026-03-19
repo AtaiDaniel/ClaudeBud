@@ -116,11 +116,17 @@ _BUDDY = [
 
 class _BannerOverwriter:
     """Passes all pty output through immediately (zero buffering), but once
-    the Claude startup banner is detected in the accumulated stream it appends
-    ANSI cursor-repositioning sequences that jump back to row 1 and overwrite
-    those 3 lines with a version that includes the ClaudeBud buddy character."""
+    the Claude startup banner is detected it appends extra ClaudeBud info.
 
-    _MARKER   = "Claude Code v"
+    Returns a (pc_data, phone_data) tuple so the PC and phone can get
+    different representations:
+    - PC gets cursor-magic overwrite (rewrites rows 1-3 + inserts extra rows)
+    - Phone gets a simple text append (no cursor tricks — xterm.js handles
+      cursor-repositioning sequences differently from native terminals and
+      the insert-lines approach was causing the banner to appear in the wrong
+      position on the phone)
+    """
+
     _MAX_SEEN = 8_000   # stop tracking after this many bytes
 
     def __init__(self, local_url: str = "", tailscale_url: str = "") -> None:
@@ -129,19 +135,21 @@ class _BannerOverwriter:
         self._local_url = local_url
         self._tailscale_url = tailscale_url
 
-    def feed(self, data: bytes) -> bytes:
-        """Always returns data immediately; may append an overwrite payload."""
+    def feed(self, data: bytes):
+        """Always returns (pc_data, phone_data) immediately.
+        On the trigger chunk, pc_data has the fancy cursor overwrite appended
+        and phone_data has a simple text append instead."""
         if self._done:
-            return data
+            return data, data
 
         self._seen += data
         if len(self._seen) > self._MAX_SEEN:
             self._done = True
-            return data
+            return data, data
 
         # Quick check: version number must be present in raw bytes
         if not _VERSION_RE.search(self._seen):
-            return data
+            return data, data
 
         # Render cursor-right sequences as spaces so word gaps are preserved
         plain = _to_plain(self._seen)
@@ -156,16 +164,19 @@ class _BannerOverwriter:
                 break
 
         if len(info) < 3:
-            return data  # keep watching
+            return data, data  # keep watching
 
         self._done = True
-        overwrite = self._build_overwrite(info[0], info[1], info[2])
-        return data + overwrite.encode("utf-8")
+        pc_extra   = self._build_pc_overwrite(info[0], info[1], info[2])
+        phone_extra = self._build_phone_append()
+        return (
+            data + pc_extra.encode("utf-8"),
+            data + phone_extra.encode("utf-8"),
+        )
 
-    def _build_overwrite(self, version: str, model: str, path: str) -> str:
+    def _build_pc_overwrite(self, version: str, model: str, path: str) -> str:
+        """Cursor-magic banner rewrite for the PC's native terminal."""
         from . import __version__ as _cbv
-        # Normalise Windows path separators so backslashes don't appear in the
-        # terminal output stream (avoids stray '\' characters on Windows).
         path = path.replace("\\", "/")
         cb_line = f"\x1b[2K         {_CB}+ ClaudeBud v{_cbv}{_RST}"
         rows = [
@@ -181,19 +192,32 @@ class _BannerOverwriter:
                 f"  {_DIM}(Tailscale){_RST}"
             )
 
-        # Claude's original banner is 3 lines. For every extra line we add,
-        # insert a blank line at row 4 first to push Claude's content down,
-        # then compensate the restored cursor position with \x1b[NB.
-        extra = len(rows) - 3 + 1  # +1: Claude's cursor lands one line below banner
+        extra = len(rows) - 3 + 1  # extra rows beyond the original 3
         return (
-            "\x1b7"                  # save cursor (after Claude's banner, ~row 4)
-            + "\x1b[4;1H"           # go to first line after Claude's 3-line banner
-            + f"\x1b[{extra}L"      # insert extra blank lines, pushing content down
+            "\x1b7"                  # save cursor
+            + "\x1b[4;1H"           # go to row 4 (just after Claude's 3-line banner)
+            + f"\x1b[{extra}L"      # insert blank lines, pushing Claude's UI down
             + "\x1b[1;1H"           # jump to row 1
             + "\r\n".join(rows)
-            + "\x1b8"               # restore cursor (to saved row 4, inside our banner)
-            + f"\x1b[{extra}B"      # move down to compensate → lands after our banner
+            + "\x1b8"               # restore cursor
+            + f"\x1b[{extra}B"      # compensate for the inserted lines
         )
+
+    def _build_phone_append(self) -> str:
+        """Simple text-only banner for the phone — no cursor repositioning.
+        Appended directly after Claude's banner output; xterm.js displays it
+        naturally without any scroll/positioning side-effects."""
+        from . import __version__ as _cbv
+        lines = [
+            f"  {_CB}+ ClaudeBud v{_cbv}{_RST}",
+            f"  {_DIM}Local:    {_RST}{_CB}{self._local_url}{_RST}",
+        ]
+        if self._tailscale_url:
+            lines.append(
+                f"  {_DIM}External: {_RST}{_CB}{self._tailscale_url}{_RST}"
+                f"  {_DIM}(Tailscale){_RST}"
+            )
+        return "\r\n" + "\r\n".join(lines) + "\r\n"
 
 
 class Session:
@@ -304,10 +328,11 @@ class Session:
             if not data:
                 break
 
-            data = self._banner.feed(data)
-            data = self._rewrite_title(data)
-            os.write(stdout_fd, data)
-            self._post_output(data)
+            pc_data, phone_data = self._banner.feed(data)
+            pc_data = self._rewrite_title(pc_data)
+            phone_data = self._rewrite_title(phone_data)
+            os.write(stdout_fd, pc_data)
+            self._post_output(phone_data)
 
         self._running = False
 
@@ -419,12 +444,13 @@ class Session:
             else:
                 raw = data
 
-            raw = self._banner.feed(raw)
-            raw = self._rewrite_title(raw)
+            pc_raw, phone_raw = self._banner.feed(raw)
+            pc_raw    = self._rewrite_title(pc_raw)
+            phone_raw = self._rewrite_title(phone_raw)
 
-            sys.stdout.write(raw.decode("utf-8", errors="replace"))
+            sys.stdout.write(pc_raw.decode("utf-8", errors="replace"))
             sys.stdout.flush()
-            self._post_output(raw)
+            self._post_output(phone_raw)
 
         self._running = False
 
